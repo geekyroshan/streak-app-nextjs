@@ -7,11 +7,54 @@ import { StatsCard } from '@/components/stats/StatsCard';
 import { RepositoryCard } from '@/components/repository/RepositoryCard';
 import { Calendar, GitBranch, BarChart2, Clock } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 export default function DashboardPage() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, session } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [authChecked, setAuthChecked] = useState(false);
+  
+  // Debug logging for auth state
+  useEffect(() => {
+    console.log('Dashboard: Auth state -', { 
+      isLoading, 
+      hasUser: !!user, 
+      hasSession: !!session,
+      userId: user?.id?.substring(0, 8) || 'none',
+      userEmail: user?.email || 'none',
+      userMetadata: user?.user_metadata ? 'present' : 'missing'
+    });
+
+    if (user?.user_metadata) {
+      console.log('Dashboard: User metadata -', JSON.stringify(user.user_metadata, null, 2));
+    }
+    
+    // Mark auth as checked once we've either loaded user data or determined it's not available
+    if (!isLoading || user) {
+      setAuthChecked(true);
+    }
+  }, [user, isLoading, session]);
+  
+  // Handle fresh login state with a simplified approach
+  useEffect(() => {
+    const fresh = searchParams.get('fresh');
+    if (fresh === 'true') {
+      console.log('Dashboard: Fresh login detected, cleaning URL');
+      
+      // Clean up URL without causing page reloads
+      const url = new URL(window.location.href);
+      url.searchParams.delete('fresh');
+      
+      // Remove timestamp parameter
+      if (url.searchParams.has('_')) {
+        url.searchParams.delete('_');
+      }
+      
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, [searchParams]);
 
   // Mock data for ActivityChart
   const dayData = [
@@ -35,23 +78,28 @@ export default function DashboardPage() {
     { name: '9PM', value: 5 },
   ];
 
-  // Show loading state while checking authentication
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
-      </div>
-    );
-  }
-
+  // Render the dashboard regardless of loading state
+  // This ensures we don't get stuck in an infinite loading screen
   return (
     <DashboardLayout>
       <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
       
       {/* Welcome Message */}
-      {user && (
+      {isLoading ? (
+        <div className="bg-card p-4 rounded-lg shadow-sm mb-6">
+          <div className="flex items-center">
+            <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-primary mr-2"></div>
+            <h2 className="text-xl font-semibold">Loading user data...</h2>
+          </div>
+        </div>
+      ) : user ? (
         <div className="bg-card p-4 rounded-lg shadow-sm mb-6">
           <h2 className="text-xl font-semibold">Welcome, {user.user_metadata?.full_name || user.user_metadata?.user_name || user.email}</h2>
+        </div>
+      ) : (
+        <div className="bg-card p-4 rounded-lg shadow-sm mb-6">
+          <h2 className="text-xl font-semibold">Dashboard</h2>
+          <p className="text-muted-foreground">No user data available. Please try refreshing or logging in again.</p>
         </div>
       )}
       

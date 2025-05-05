@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 // Define database types based on our schema
 export type Database = {
@@ -13,6 +14,7 @@ export type Database = {
           last_login: string | null;
           avatar_url: string | null;
           display_name: string | null;
+          github_username: string | null;
         };
         Insert: {
           id?: string;
@@ -22,6 +24,7 @@ export type Database = {
           last_login?: string | null;
           avatar_url?: string | null;
           display_name?: string | null;
+          github_username?: string | null;
         };
         Update: {
           id?: string;
@@ -31,6 +34,7 @@ export type Database = {
           last_login?: string | null;
           avatar_url?: string | null;
           display_name?: string | null;
+          github_username?: string | null;
         };
       };
       user_preferences: {
@@ -139,10 +143,17 @@ export type Database = {
   };
 };
 
-// Supabase client with types
+// Environment variables
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+// Client for browser-side code (client components)
+export const supabase = createClientComponentClient<Database>();
+
+// Direct client for non-Next.js environments or non-browser contexts
+export const directClient = createClient<Database>(
+  supabaseUrl, 
+  supabaseAnonKey
+);
 
 export default supabase; 

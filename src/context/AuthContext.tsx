@@ -1,5 +1,7 @@
+"use client";
+
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 import { clearAuthCookies, clearLocalSession } from '@/middleware/auth';
@@ -20,64 +22,168 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [authInitialized, setAuthInitialized] = useState<boolean>(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
 
+  // Handle fresh parameter for forced reload after auth
   useEffect(() => {
-    const setupSession = async () => {
-      setIsLoading(true);
+    const fresh = searchParams?.get('fresh');
+    if (fresh === 'true' && !authInitialized) {
+      console.log('Auth context: Fresh login detected, waiting for auth initialization');
+    }
+  }, [searchParams, authInitialized]);
+
+  // This effect handles both the initial session setup and auth state changes
+  useEffect(() => {
+    console.log('Setting up auth context...');
+    let mounted = true;
+    
+    // Keep track of auth state initialization
+    let initialSessionChecked = false;
+    let initializationRetries = 0;
+    const MAX_RETRIES = 3;
+    
+    // Function to handle new session data
+    const handleSessionUpdate = async (newSession: Session | null) => {
+      if (!mounted) return;
+      
+      console.log('Auth context: Handling session update, session exists:', !!newSession);
+      if (newSession?.user) {
+        console.log('Auth context: User ID in session:', newSession.user.id);
+        console.log('Auth context: User email:', newSession.user.email);
+        console.log('Auth context: User metadata available:', !!newSession.user.user_metadata);
+      }
+      
+      // Update state with session data
+      setSession(newSession);
+      setUser(newSession?.user ?? null);
+      
+      // If there's a valid session and user data, create/update the user record in Supabase
+      if (newSession?.user) {
+        try {
+          console.log('Creating/updating user record in database');
+          console.log('User ID:', newSession.user.id);
+          console.log('User metadata:', JSON.stringify(newSession.user.user_metadata, null, 2));
+          
+          // Create user object with all required fields including github_username
+          const userData = {
+            id: newSession.user.id,
+            email: newSession.user.email,
+            auth_id: newSession.user.id,
+            last_login: new Date().toISOString(),
+            avatar_url: newSession.user.user_metadata?.avatar_url || null,
+            display_name: newSession.user.user_metadata?.full_name || 
+                        newSession.user.user_metadata?.user_name || 
+                        newSession.user.user_metadata?.name || 
+                        'GitHub User',
+            github_username: newSession.user.user_metadata?.user_name || null
+          };
+          
+          // Upsert user data
+          const { error } = await supabase.from('users').upsert(
+            userData, 
+            { onConflict: 'auth_id', ignoreDuplicates: false }
+          );
+          
+          if (error) {
+            console.error('Error updating user record:', error);
+          } else {
+            console.log('Successfully created/updated user record');
+          }
+        } catch (err) {
+          console.error('Error updating user record:', err);
+        }
+      }
+      
+      // Only set loading to false after we've handled the session
+      if (initialSessionChecked) {
+        setIsLoading(false);
+        setAuthInitialized(true);
+      }
+    };
+
+    // Get the initial session
+    const setupInitialSession = async () => {
       try {
-        // Get the initial session
+        console.log('Fetching initial session...');
         const { data, error } = await supabase.auth.getSession();
         
         if (error) {
-          throw error;
+          console.error('Error retrieving initial session:', error);
+          setError(error.message);
+          setIsLoading(false);
+          return;
         }
         
-        if (data?.session) {
-          setSession(data.session);
-          setUser(data.session.user);
+        console.log('Initial session retrieved:', data.session ? 'Session exists' : 'No session');
+        initialSessionChecked = true;
+        
+        if (!data.session && initializationRetries < MAX_RETRIES) {
+          console.log(`Auth context: No session found, retry attempt ${initializationRetries + 1}/${MAX_RETRIES}`);
+          initializationRetries++;
+          // Wait 1 second and try again
+          setTimeout(setupInitialSession, 1000);
+          return;
         }
+        
+        // Handle the session data
+        await handleSessionUpdate(data.session);
       } catch (err) {
-        console.error('Error retrieving session:', err);
+        console.error('Error during initial session setup:', err);
         setError(err instanceof Error ? err.message : 'An unknown error occurred');
-      } finally {
         setIsLoading(false);
       }
     };
 
-    let mounted = true;
-    setupSession();
+    // Start the session setup process
+    setupInitialSession();
 
-    // Listen for auth state changes
+    // Subscribe to auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, newSession) => {
-        if (!mounted) return;
-        
         console.log('Auth state changed:', event);
-        setSession(newSession);
-        setUser(newSession?.user ?? null);
-
-        if (event === 'SIGNED_IN' && newSession) {
-          // Update user record in database when signed in
-          try {
-            const { error } = await supabase.from('users').upsert({
-              id: newSession.user.id,
-              email: newSession.user.email,
-              auth_id: newSession.user.id,
-              last_login: new Date().toISOString(),
-              avatar_url: newSession.user.user_metadata.avatar_url || null,
-              display_name: newSession.user.user_metadata.full_name || newSession.user.user_metadata.user_name || null
-            });
-
-            if (error) throw error;
-          } catch (err) {
-            console.error('Error updating user record:', err);
-          }
+        
+        // Handle different auth events
+        switch (event) {
+          case 'SIGNED_IN':
+            console.log('User signed in, updating session');
+            await handleSessionUpdate(newSession);
+            // Force a reload after sign-in to ensure components have the latest auth state
+            if (window.location.href.indexOf('fresh=true') === -1) {
+              console.log('Auth context: Redirecting with fresh=true after sign in');
+              const currentPath = window.location.pathname;
+              window.location.href = `${currentPath}?fresh=true&_=${Date.now()}`;
+            }
+            break;
+            
+          case 'SIGNED_OUT':
+            console.log('User signed out, clearing session');
+            setUser(null);
+            setSession(null);
+            setIsLoading(false);
+            break;
+            
+          case 'TOKEN_REFRESHED':
+            console.log('Token refreshed, updating session');
+            await handleSessionUpdate(newSession);
+            break;
+            
+          case 'USER_UPDATED':
+            console.log('User updated, updating session');
+            await handleSessionUpdate(newSession);
+            break;
+            
+          default:
+            console.log('Other auth event:', event);
+            await handleSessionUpdate(newSession);
         }
       }
     );
 
+    // Clean up subscription on unmount
     return () => {
+      console.log('Cleaning up auth context...');
       mounted = false;
       subscription.unsubscribe();
     };
@@ -92,16 +198,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
           scopes: 'read:user user:email',
-          skipBrowserRedirect: false // Ensure the browser is redirected
+          skipBrowserRedirect: false
         }
       });
       
       if (error) {
         throw error;
       }
-      
-      // No need to manually redirect - Supabase will handle this
-      // The auth callback route will capture the code and exchange it for a session
     } catch (err) {
       console.error('Error signing in with GitHub:', err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
@@ -115,33 +218,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('Signing out...');
       
-      // First, clear local state
+      // Clear local state first
       setUser(null);
       setSession(null);
       
-      // Clear all auth cookies using our utility
+      // Clear cookies and local storage
       clearAuthCookies();
-      
-      // Clear localStorage
       clearLocalSession();
       
-      // Then, sign out from Supabase - this should clear session cookies
+      // Sign out from Supabase
       const { error } = await supabase.auth.signOut({
-        scope: 'global' // Sign out from all tabs and devices
+        scope: 'global'
       });
       
       if (error) {
         throw error;
       }
       
-      console.log('Sign out successful, redirecting to landing page');
+      console.log('Sign out successful, redirecting');
       
-      // Force a page refresh to ensure all states are cleared
-      window.location.href = '/?logout=success';
+      // Use a more direct and reliable approach to redirect
+      // Force a hard reload to the root URL to ensure clean state
+      window.location.replace('/');
     } catch (err) {
       console.error('Error signing out:', err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
       setIsLoading(false);
+      
+      // Even on error, attempt to redirect to ensure the user isn't stuck
+      window.location.replace('/');
     }
   };
 

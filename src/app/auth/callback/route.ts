@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Use cookies with await to avoid Next.js warnings
     const cookieStore = cookies();
     const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
     
@@ -37,17 +38,87 @@ export async function GET(request: NextRequest) {
       // Success - Log that we got the session
       console.log('Successfully exchanged code for session', { user: data.session?.user.email });
       
-      // Redirect to dashboard
-      return NextResponse.redirect(new URL('/dashboard', request.url));
+      // Make sure we have time to create user record before redirecting
+      if (data.session?.user) {
+        try {
+          // Log user metadata to debug github_username
+          console.log('User metadata from callback:', data.session.user.user_metadata);
+          const githubUsername = data.session.user.user_metadata?.user_name || null;
+          console.log('GitHub username from metadata:', githubUsername);
+          
+          // First check if user already exists
+          const { data: existingUser, error: lookupError } = await supabase
+            .from('users')
+            .select('id, auth_id, github_username')
+            .eq('auth_id', data.session.user.id)
+            .single();
+            
+          if (lookupError && lookupError.code !== 'PGRST116') { // PGRST116 is "no rows returned" error
+            console.error('Error checking for existing user in callback:', lookupError);
+          }
+          
+          console.log('Existing user check result in callback:', existingUser || 'No user found');
+          
+          // Prepare user data with preserved github_username if needed
+          const userData = {
+            id: data.session.user.id,
+            email: data.session.user.email,
+            auth_id: data.session.user.id,
+            last_login: new Date().toISOString(),
+            avatar_url: data.session.user.user_metadata?.avatar_url || null,
+            display_name: data.session.user.user_metadata?.full_name || 
+                    data.session.user.user_metadata?.user_name || 
+                    data.session.user.user_metadata?.name || 
+                    'GitHub User',
+            github_username: githubUsername
+          };
+          
+          // Ensure we're not overwriting existing github_username with null
+          if (!userData.github_username && existingUser?.github_username) {
+            console.log('Preserving existing github_username in callback:', existingUser.github_username);
+            userData.github_username = existingUser.github_username;
+          }
+          
+          // Ensure user record exists in the database
+          const { error: upsertError } = await supabase.from('users').upsert(
+            userData, 
+            { onConflict: 'auth_id' }
+          );
+          
+          if (upsertError) {
+            console.error('Error upserting user record in callback:', upsertError);
+          } else {
+            console.log('User record created/updated in callback handler with github_username:', userData.github_username);
+          }
+        } catch (dbError) {
+          console.error('Error creating user record in callback:', dbError);
+          // Continue even if db update fails
+        }
+      }
+      
+      // Generate a unique timestamp to prevent caching
+      const timestamp = Date.now();
+      
+      // Redirect to dashboard with a flag to force reload
+      return NextResponse.redirect(new URL(`/dashboard?fresh=true&_=${timestamp}`, request.url), {
+        // Add cache-control headers to ensure no caching of this redirect
+        headers: {
+          'Cache-Control': 'no-store, max-age=0, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      });
     } else {
-      // If no code provided, check if we might be in a fragment URL case
-      // Use client-side script to handle the fragment, since Next.js route handlers can't access URL fragments
+      // If no code provided, use an improved client-side script
       return new NextResponse(
         `
         <!DOCTYPE html>
         <html>
           <head>
             <title>Authenticating...</title>
+            <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+            <meta http-equiv="Pragma" content="no-cache" />
+            <meta http-equiv="Expires" content="0" />
           </head>
           <body>
             <p>Authenticating...</p>
@@ -67,7 +138,10 @@ export async function GET(request: NextRequest) {
                   .then(response => response.json())
                   .then(data => {
                     if (data.success) {
-                      window.location.href = '/dashboard';
+                      // Force reload to ensure fresh session state
+                      // Add a random query param to bust any cache
+                      const timestamp = Date.now();
+                      window.location.href = '/dashboard?fresh=true&_=' + timestamp;
                     } else {
                       window.location.href = '/?error=' + encodeURIComponent(data.error || 'session_error');
                     }
@@ -91,6 +165,10 @@ export async function GET(request: NextRequest) {
         {
           headers: {
             'Content-Type': 'text/html',
+            // Prevent caching to ensure fresh state
+            'Cache-Control': 'no-store, max-age=0, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
           },
         }
       );

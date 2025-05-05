@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     
     console.log('Setting session from URL:', url);
     
-    // Create Supabase client
+    // Create Supabase client with explicit await
     const cookieStore = cookies();
     const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
     
@@ -56,9 +56,66 @@ export async function POST(request: Request) {
     
     console.log('Session successfully established for user:', data.session.user.email);
     
+    // Log user metadata to debug github_username
+    console.log('User metadata from session:', data.session.user.user_metadata);
+    const githubUsername = data.session.user.user_metadata?.user_name || null;
+    console.log('GitHub username from metadata:', githubUsername);
+    
+    // Ensure the user record exists in our database after successful authentication
+    try {
+      // First check if user already exists
+      const { data: existingUser, error: lookupError } = await supabase
+        .from('users')
+        .select('id, auth_id, github_username')
+        .eq('auth_id', data.session.user.id)
+        .single();
+        
+      if (lookupError && lookupError.code !== 'PGRST116') { // PGRST116 is "no rows returned" error
+        console.error('Error checking for existing user:', lookupError);
+      }
+      
+      console.log('Existing user check result:', existingUser || 'No user found');
+      
+      // Prepare user data with Github username from metadata
+      const userData = {
+        id: data.session.user.id,
+        email: data.session.user.email,
+        auth_id: data.session.user.id,
+        last_login: new Date().toISOString(),
+        avatar_url: data.session.user.user_metadata?.avatar_url || null,
+        display_name: data.session.user.user_metadata?.full_name || 
+                    data.session.user.user_metadata?.user_name || 
+                    data.session.user.user_metadata?.name || 
+                    'GitHub User',
+        github_username: githubUsername
+      };
+      
+      // Ensure we're not overwriting existing github_username with null
+      if (!userData.github_username && existingUser?.github_username) {
+        console.log('Preserving existing github_username:', existingUser.github_username);
+        userData.github_username = existingUser.github_username;
+      }
+      
+      const { error: upsertError } = await supabase.from('users').upsert(
+        userData,
+        { onConflict: 'auth_id' }
+      );
+      
+      if (upsertError) {
+        console.error('Error ensuring user record exists:', upsertError);
+      } else {
+        console.log('User record created/updated in database with github_username:', userData.github_username);
+      }
+    } catch (upsertErr) {
+      console.error('Exception creating user record:', upsertErr);
+      // Don't fail the auth process if the user record creation fails
+    }
+    
     // Create a response with explicit no-cache headers
     const response = NextResponse.json({ success: true });
     response.headers.set('Cache-Control', 'no-store, max-age=0');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
     
     return response;
   } catch (error) {

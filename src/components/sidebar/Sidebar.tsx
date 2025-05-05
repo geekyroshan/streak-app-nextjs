@@ -56,12 +56,28 @@ export function Sidebar() {
     e.stopPropagation();
     
     try {
+      // Show toast before signOut to ensure it's displayed
+      showToast("Signing out...", "info", 2000);
+      
+      // Add a failsafe redirect in case signOut fails to redirect
+      const redirectTimeout = setTimeout(() => {
+        console.log("Fallback redirect to landing page");
+        window.location.replace('/');
+      }, 3000);
+      
+      // Call the auth context signOut method
       await signOut();
-      showToast("Successfully signed out", "success", 3000);
+      
+      // Clear the failsafe if signOut completes
+      clearTimeout(redirectTimeout);
+      
       // Let the AuthContext handle the redirect
     } catch (error) {
       console.error("Sign out error:", error);
-      showToast("Failed to sign out", "error", 3000);
+      showToast("Failed to sign out, redirecting anyway", "error", 3000);
+      
+      // Force redirect even if there's an error
+      window.location.replace('/');
     }
   };
   

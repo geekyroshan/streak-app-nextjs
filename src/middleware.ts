@@ -34,6 +34,7 @@ export async function middleware(request: NextRequest) {
     const res = NextResponse.next();
     
     // Create a Supabase client for the middleware
+    // This is fine as it uses a different method for handling cookies
     const supabase = createMiddlewareClient({ req: request, res });
     
     // Get the user's session
