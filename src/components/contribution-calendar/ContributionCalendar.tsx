@@ -1,11 +1,14 @@
 "use client";
 
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useGitHubContributions, transformContributionsData } from '@/hooks/github/use-github-contributions';
+import { useAuth } from '@/context/AuthContext';
 
 interface ContributionCalendarProps {
   className?: string;
+  username?: string;
 }
 
 type Month = {
@@ -30,37 +33,98 @@ const MONTHS: Month[] = [
 
 const DAYS = ['Mon', 'Wed', 'Fri'];
 
-const YEARS = ['2025', '2024', '2023', '2022', '2021'];
-
-// Mock data for the contribution cells
-// 0 = no contribution, 1-4 = level of contribution
-const generateMockData = () => {
-  const data: number[][] = [];
-  
-  for (let day = 0; day < 7; day++) {
-    data[day] = [];
-    for (let week = 0; week < 53; week++) {
-      const rand = Math.random();
-      if (rand < 0.6) {
-        data[day][week] = 0;
-      } else if (rand < 0.75) {
-        data[day][week] = 1;
-      } else if (rand < 0.85) {
-        data[day][week] = 2;
-      } else if (rand < 0.95) {
-        data[day][week] = 3;
-      } else {
-        data[day][week] = 4;
-      }
-    }
-  }
-  return data;
+// Calculate the last 5 years for the year selection
+const getCurrentYears = () => {
+  const currentYear = new Date().getFullYear();
+  return [
+    currentYear.toString(),
+    (currentYear - 1).toString(),
+    (currentYear - 2).toString(),
+    (currentYear - 3).toString(),
+    (currentYear - 4).toString(),
+  ];
 };
 
-export function ContributionCalendar({ className }: ContributionCalendarProps) {
-  const [selectedYear, setSelectedYear] = React.useState('2025');
-  const contributionData = React.useMemo(() => generateMockData(), []);
-  const [hoverInfo, setHoverInfo] = React.useState<string | null>(null);
+const YEARS = getCurrentYears();
+
+// Map GitHub contribution count to level (0-4)
+const getContributionLevel = (count: number): 0 | 1 | 2 | 3 | 4 => {
+  if (count === 0) return 0;
+  if (count <= 2) return 1;
+  if (count <= 5) return 2;
+  if (count <= 10) return 3;
+  return 4;
+};
+
+export function ContributionCalendar({ className, username: propUsername }: ContributionCalendarProps) {
+  const { user } = useAuth();
+  const [selectedYear, setSelectedYear] = useState(YEARS[0]);
+  const [hoverInfo, setHoverInfo] = useState<string | null>(null);
+  
+  // Determine which username to use (prop or authenticated user)
+  const username = propUsername || user?.user_metadata?.user_name || '';
+
+  // Calculate date range for the selected year
+  const dateRange = useMemo(() => {
+    const year = parseInt(selectedYear);
+    const fromDate = new Date(year, 0, 1); // Jan 1
+    const toDate = new Date(year, 11, 31); // Dec 31
+    return { fromDate, toDate };
+  }, [selectedYear]);
+
+  // Fetch contribution data
+  const { data, isLoading, error } = useGitHubContributions(username, {
+    fromDate: dateRange.fromDate, 
+    toDate: dateRange.toDate,
+    enabled: !!username
+  });
+
+  // Process contribution data into calendar format
+  const contributionData = useMemo(() => {
+    if (!data?.data) return null;
+    
+    return transformContributionsData(data.data);
+  }, [data]);
+
+  // Format data for the calendar grid
+  const calendarData = useMemo(() => {
+    if (!contributionData) return null;
+    
+    // Create a map of date -> contribution count
+    const dateMap = new Map();
+    contributionData.calendar.forEach(day => {
+      dateMap.set(day.date, day.count);
+    });
+    
+    // Build the calendar grid (7 days x 52 weeks)
+    const grid: number[][] = [];
+    
+    // Starting from the first day of the selected year
+    const startDate = new Date(parseInt(selectedYear), 0, 1);
+    
+    // Adjust to start from the first day of the week (Monday)
+    const dayOfWeek = startDate.getDay();
+    startDate.setDate(startDate.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+    
+    // Generate the grid
+    for (let row = 0; row < 7; row++) {
+      grid[row] = [];
+      for (let col = 0; col < 53; col++) {
+        const currentDate = new Date(startDate);
+        currentDate.setDate(startDate.getDate() + (row + col * 7));
+        
+        // Format the date as YYYY-MM-DD
+        const formattedDate = currentDate.toISOString().split('T')[0];
+        
+        // Get contribution count for this date (default to 0)
+        const count = dateMap.get(formattedDate) || 0;
+        
+        grid[row][col] = count;
+      }
+    }
+    
+    return grid;
+  }, [contributionData, selectedYear]);
 
   return (
     <div className={cn("w-full", className)}>
@@ -94,50 +158,67 @@ export function ContributionCalendar({ className }: ContributionCalendarProps) {
       </div>
 
       <div className="w-full overflow-hidden">
-        <div className="flex">
-          <div className="flex flex-col mr-4 mt-6 gap-4">
-            {DAYS.map((day) => (
-              <div key={day} className="h-4 text-xs text-muted-foreground">
-                {day}
-              </div>
-            ))}
+        {isLoading && (
+          <div className="flex justify-center items-center h-60">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+            <span className="ml-3 text-muted-foreground">Loading contribution data...</span>
           </div>
-          
-          <div className="flex flex-col flex-grow">
-            <div className="flex mb-2 justify-between">
-              {MONTHS.map((month) => (
-                <div
-                  key={month.name}
-                  className="text-xs text-muted-foreground"
-                >
-                  {month.abbreviation}
+        )}
+        
+        {error && (
+          <div className="flex justify-center items-center h-60 text-destructive">
+            <p>Failed to load contribution data. Please try again later.</p>
+          </div>
+        )}
+        
+        {!isLoading && !error && calendarData && (
+          <div className="flex">
+            <div className="flex flex-col mr-4 mt-6 gap-4">
+              {DAYS.map((day) => (
+                <div key={day} className="h-4 text-xs text-muted-foreground">
+                  {day}
                 </div>
               ))}
             </div>
             
-            <div className="grid grid-rows-3 gap-4">
-              {[0, 1, 2].map((rowIndex) => (
-                <div key={rowIndex} className="grid grid-cols-[repeat(52,_minmax(0,_1fr))] gap-1">
-                  {Array.from({ length: 52 }).map((_, cellIndex) => {
-                    const level = contributionData[rowIndex]?.[cellIndex] || 0;
-                    return (
-                      <div
-                        key={`${rowIndex}-${cellIndex}`}
-                        className={cn(
-                          "w-4 h-4 rounded-sm cursor-pointer",
-                          `contribution-level-${level}`
-                        )}
-                        onMouseEnter={() => setHoverInfo(`${level} contributions on this day`)}
-                        onMouseLeave={() => setHoverInfo(null)}
-                        title={`${level} contributions on this day`}
-                      />
-                    );
-                  })}
-                </div>
-              ))}
+            <div className="flex flex-col flex-grow">
+              <div className="flex mb-2 justify-between">
+                {MONTHS.map((month) => (
+                  <div
+                    key={month.name}
+                    className="text-xs text-muted-foreground"
+                  >
+                    {month.abbreviation}
+                  </div>
+                ))}
+              </div>
+              
+              <div className="grid grid-rows-7 gap-1">
+                {Array.from({ length: 7 }).map((_, rowIndex) => (
+                  <div key={rowIndex} className="grid grid-cols-[repeat(53,_minmax(0,_1fr))] gap-1">
+                    {Array.from({ length: 53 }).map((_, colIndex) => {
+                      const count = calendarData[rowIndex]?.[colIndex] || 0;
+                      const level = getContributionLevel(count);
+                      
+                      return (
+                        <div
+                          key={`${rowIndex}-${colIndex}`}
+                          className={cn(
+                            "w-3 h-3 rounded-sm cursor-pointer",
+                            `contribution-level-${level}`
+                          )}
+                          onMouseEnter={() => setHoverInfo(`${count} contributions on this day`)}
+                          onMouseLeave={() => setHoverInfo(null)}
+                          title={`${count} contributions on this day`}
+                        />
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
       
       <div className="mt-4 text-left">
@@ -146,10 +227,10 @@ export function ContributionCalendar({ className }: ContributionCalendarProps) {
             {hoverInfo}
           </span>
         )}
-        {!hoverInfo && (
-          <a href="#" className="text-xs text-muted-foreground hover:text-foreground">
-            Learn how we count contributions
-          </a>
+        {!hoverInfo && contributionData && (
+          <span className="text-xs text-muted-foreground">
+            {contributionData.stats.totalContributions} contributions in {selectedYear}
+          </span>
         )}
       </div>
     </div>

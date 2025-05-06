@@ -2,11 +2,14 @@
 
 import React from 'react';
 import { AuthProvider } from '@/context/AuthContext';
+import { ReactQueryProvider } from '@/components/providers/ReactQueryProvider';
 
 export default function ClientProviders({ children }: { children: React.ReactNode }) {
   return (
     <AuthProvider>
-      {children}
+      <ReactQueryProvider>
+        {children}
+      </ReactQueryProvider>
     </AuthProvider>
   );
 } 
