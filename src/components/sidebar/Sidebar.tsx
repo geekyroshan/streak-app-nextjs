@@ -9,7 +9,8 @@ import {
   Activity,
   Settings,
   BarChart2,
-  LogOut
+  LogOut,
+  GitCommit
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -37,6 +38,11 @@ const navItems: NavItem[] = [
     label: "Analytics",
     icon: <BarChart2 className="w-5 h-5" />,
     href: "/analytics",
+  },
+  {
+    label: "Streak Manager",
+    icon: <GitCommit className="w-5 h-5" />,
+    href: "/streak-manager",
   },
   {
     label: "Settings",
