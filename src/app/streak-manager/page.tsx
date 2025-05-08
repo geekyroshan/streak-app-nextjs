@@ -1,184 +1,367 @@
 "use client";
 
-import { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/dashboard-layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Calendar, Clock, GitBranch, MessageSquarePlus, CalendarDays, ClipboardList, AlertTriangle, FolderOpen } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Calendar, Clock, GitBranch, MessageSquarePlus, CalendarDays, FileEdit, GitCommit, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { useGitHubRepositories, transformRepositoryData } from '@/hooks/github/use-github-repositories';
 import { useAuth } from '@/context/AuthContext';
-import { Skeleton } from '@/components/ui/skeleton';
-import { format } from 'date-fns';
-import { FileBrowser } from '@/components/file-browser/FileBrowser';
-import { useRepositoryFiles, useFileContent } from '@/hooks/github/use-github-files';
-import { useBackdatedCommit } from '@/hooks/github/use-github-commits';
 
-// Type for repository selection
-type Repository = {
-  id: number;
+// GitHub repository type
+interface Repository {
   name: string;
   fullName: string;
-  lastCommit: string;
-};
+  url: string;
+  lastUpdatedText: string;
+  isPrivate: boolean;
+}
+
+// GitHub file type
+interface RepoFile {
+  name: string;
+  path: string;
+  type: string;
+  isDirectory: boolean;
+  url: string;
+}
 
 export default function StreakManagerPage() {
+  const [activeTab, setActiveTab] = useState("fix-missed-days");
+  const [selectedRepository, setSelectedRepository] = useState<string | null>(null);
+  const [commitDate, setCommitDate] = useState<string>("");
+  const [commitTime, setCommitTime] = useState<string>("");
+  const [commitMessage, setCommitMessage] = useState<string>("");
+  const [selectedFile, setSelectedFile] = useState<string>("");
+  const [fileContent, setFileContent] = useState<string>("");
+  const [loading, setLoading] = useState({
+    repositories: false,
+    files: false,
+    content: false
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [files, setFiles] = useState<RepoFile[]>([]);
+  const [currentPath, setCurrentPath] = useState<string>("");
   const { showToast } = useToast();
-  const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState("missed-days");
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [selectedTime, setSelectedTime] = useState({ hour: "14", minute: "30" });
-  const [commitMessage, setCommitMessage] = useState("");
-  const [filePath, setFilePath] = useState("");
-  const [fileContent, setFileContent] = useState("");
-  const [selectedRepo, setSelectedRepo] = useState<Repository | null>(null);
-  const [currentPath, setCurrentPath] = useState("");
-  const [isFileContentModified, setIsFileContentModified] = useState(false);
-  
-  // GitHub username from auth context
-  const githubUsername = user?.user_metadata?.user_name || '';
-  
-  // Extract owner/repo from the selected repository
-  const [owner, repo] = selectedRepo ? (selectedRepo.fullName.split('/') || []) : ['', ''];
-  
-  // Fetch repositories data
-  const {
-    data: repositoriesData,
-    isLoading: isRepositoriesLoading,
-    error: repositoriesError
-  } = useGitHubRepositories(githubUsername, {
-    sort: 'updated',
-    perPage: 10,
-    enabled: !!githubUsername
-  });
+  const { user, isLoading: authLoading } = useAuth();
 
-  // Process repositories data
-  const repositories = repositoriesData?.data 
-    ? transformRepositoryData(repositoriesData.data) 
-    : [];
-    
-  // Fetch repository files
-  const {
-    data: files = [],
-    isLoading: isFilesLoading
-  } = useRepositoryFiles(owner, repo, currentPath);
-  
+  // Fetch repositories when component mounts
+  useEffect(() => {
+    // Only fetch repositories if user is authenticated
+    if (!authLoading && user) {
+      fetchRepositories();
+    }
+  }, [user, authLoading]);
+
+  // Fetch repository files when a repository is selected
+  useEffect(() => {
+    if (selectedRepository) {
+      fetchFiles(selectedRepository, "");
+    }
+  }, [selectedRepository]);
+
   // Fetch file content when a file is selected
-  const {
-    data: fetchedFileContent = '',
-    isLoading: isFileContentLoading
-  } = useFileContent(owner, repo, filePath);
-  
-  // Create backdated commit mutation
-  const { mutate: createBackdatedCommit, isPending: isCommitPending } = useBackdatedCommit({
-    onSuccess: (data) => {
-      showToast(`Backdated commit created successfully`, "success");
-      // Reset form
-      setFilePath("");
-      setFileContent("");
-      setCommitMessage("");
-    },
-    onError: (error) => {
-      showToast(`Error creating backdated commit: ${error.message}`, "error");
-    }
-  });
-
-  // Set default date to today
   useEffect(() => {
-    setSelectedDate(new Date());
-  }, []);
-  
-  // Update file content when fetched content changes
-  useEffect(() => {
-    if (fetchedFileContent && !isFileContentModified) {
-      setFileContent(fetchedFileContent);
+    if (selectedRepository && selectedFile && !isDirectory(selectedFile)) {
+      fetchFileContent(selectedRepository, selectedFile);
     }
-  }, [fetchedFileContent, isFileContentModified]);
-  
-  // Reset file content modified flag when selecting a new file
-  useEffect(() => {
-    setIsFileContentModified(false);
-  }, [filePath]);
+  }, [selectedFile]);
 
-  // Handle repository selection
-  const handleSelectRepo = (repo: Repository) => {
-    setSelectedRepo(repo);
-    setCurrentPath("");
-    setFilePath("");
-    setFileContent("");
-  };
-  
-  // Handle file selection
-  const handleSelectFile = (file: { path: string; name: string }) => {
-    setFilePath(file.path);
-  };
-  
-  // Handle folder navigation
-  const handleNavigateToFolder = (path: string) => {
-    setCurrentPath(path);
-  };
-  
-  // Handle file content change
-  const handleFileContentChange = (content: string) => {
-    setFileContent(content);
-    setIsFileContentModified(true);
+  // Function to fetch repositories from our API
+  const fetchRepositories = async () => {
+    try {
+      setLoading(prev => ({ ...prev, repositories: true }));
+      setError(null);
+      
+      const response = await fetch('/api/github/repositories');
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch repositories');
+      }
+      
+      const data = await response.json();
+      setRepositories(data.repositories);
+    } catch (error) {
+      console.error('Error fetching repositories:', error);
+      setError(error instanceof Error ? error.message : 'Failed to fetch repositories');
+      showToast('Failed to fetch repositories', 'error');
+    } finally {
+      setLoading(prev => ({ ...prev, repositories: false }));
+    }
   };
 
-  // Handle backdated commit creation
-  const handleCreateBackdatedCommit = () => {
-    // Validation checks
-    if (!selectedRepo) {
-      showToast("Please select a repository", "error");
-      return;
+  // Function to fetch files from a repository
+  const fetchFiles = async (repoName: string, path: string) => {
+    try {
+      setLoading(prev => ({ ...prev, files: true }));
+      setError(null);
+      
+      console.log('Fetching files:', { repoName, path });
+      
+      const response = await fetch(`/api/github/files?repoName=${encodeURIComponent(repoName)}&path=${encodeURIComponent(path)}`);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch files');
+      }
+      
+      const data = await response.json();
+      setFiles(data.files);
+      setCurrentPath(data.currentPath);
+    } catch (error) {
+      console.error('Error fetching files:', error);
+      setError(error instanceof Error ? error.message : 'Failed to fetch files');
+      showToast('Failed to fetch repository files', 'error');
+    } finally {
+      setLoading(prev => ({ ...prev, files: false }));
     }
-    
-    if (!selectedDate) {
-      showToast("Please select a date", "error");
-      return;
-    }
-    
-    if (!commitMessage.trim()) {
-      showToast("Please enter a commit message", "error");
-      return;
-    }
-    
-    if (!filePath.trim()) {
-      showToast("Please select a file", "error");
-      return;
-    }
-    
-    if (!fileContent.trim()) {
-      showToast("File content cannot be empty", "error");
-      return;
-    }
-    
-    // Create commit date/time
-    const commitDate = new Date(selectedDate);
-    commitDate.setHours(parseInt(selectedTime.hour, 10));
-    commitDate.setMinutes(parseInt(selectedTime.minute, 10));
-    
-    // Create backdated commit
-    createBackdatedCommit({
-      repository: selectedRepo,
-      filePath,
-      fileContent,
-      message: commitMessage,
-      date: commitDate
-    });
   };
 
-  // Handle schedule commit
-  const handleScheduleCommit = () => {
-    showToast("Commit scheduled successfully", "success");
+  // Function to fetch file content
+  const fetchFileContent = async (repoName: string, path: string) => {
+    try {
+      setLoading(prev => ({ ...prev, content: true }));
+      setError(null);
+      
+      const response = await fetch(`/api/github/file-content?repoName=${encodeURIComponent(repoName)}&path=${encodeURIComponent(path)}`);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch file content');
+      }
+      
+      const data = await response.json();
+      setFileContent(data.content);
+      // Set the file as selected
+      setSelectedFile(path);
+    } catch (error) {
+      console.error('Error fetching file content:', error);
+      setError(error instanceof Error ? error.message : 'Failed to fetch file content');
+      showToast('Failed to fetch file content', 'error');
+    } finally {
+      setLoading(prev => ({ ...prev, content: false }));
+    }
   };
 
-  // Handle bulk operations
-  const handleBulkOperation = () => {
-    showToast("Bulk operation scheduled", "success");
+  // Handle file or directory click
+  const handleFileClick = (file: RepoFile) => {
+    if (file.isDirectory) {
+      // If it's a directory and ".." (parent), navigate up
+      if (file.name === '..') {
+        fetchFiles(selectedRepository!, file.path);
+      } else {
+        // Otherwise navigate into the directory
+        fetchFiles(selectedRepository!, file.path);
+      }
+    } else {
+      // If it's a file, fetch its content
+      console.log('File clicked, fetching content:', { file, repository: selectedRepository });
+      fetchFileContent(selectedRepository!, file.path);
+    }
+  };
+
+  // Check if a path is a directory based on lack of extension
+  const isDirectory = (path: string): boolean => {
+    const fileExtension = path.split('.').pop();
+    // If no extension or the path ends with a slash, consider it a directory
+    return !fileExtension || path.endsWith('/');
+  };
+
+  // Function to handle creating a backdated commit
+  const handleCreateBackdatedCommit = async () => {
+    try {
+      // Verify that all required fields are present
+      if (!selectedRepository || !commitDate || !commitTime || !commitMessage || !selectedFile || !fileContent) {
+        showToast('Please fill out all required fields', 'error');
+        return;
+      }
+
+      // Set loading state
+      setLoading(prev => ({ ...prev, content: true }));
+      
+      // Prepare the request body
+      const payload = {
+        repoName: selectedRepository,
+        filePath: selectedFile,
+        commitMessage,
+        fileContent,
+        date: commitDate,
+        time: commitTime
+      };
+      
+      // Make the API request
+      const response = await fetch('/api/github/create-commit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      // Handle the response
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create backdated commit');
+      }
+      
+      const data = await response.json();
+      
+      // Show success message
+      showToast('Backdated commit created successfully!', 'success');
+      
+      // Reset form or redirect to view commit
+      // Optional: add confirmation UI with link to view the commit
+      console.log('Commit created:', data);
+      
+    } catch (error) {
+      console.error('Error creating backdated commit:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create backdated commit';
+      showToast(errorMessage, 'error');
+    } finally {
+      setLoading(prev => ({ ...prev, content: false }));
+    }
+  };
+
+  // Loading repositories state
+  const renderRepositories = () => {
+    if (loading.repositories) {
+      return (
+        <div className="flex justify-center items-center h-40">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="text-red-500 text-center p-4 border border-red-300 rounded-md bg-red-50 dark:bg-red-900/20">
+          {error}
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {repositories.map((repo) => (
+          <Button
+            key={repo.fullName}
+            variant={selectedRepository === repo.fullName ? "default" : "outline"}
+            className="h-auto py-6 flex flex-col items-center justify-center gap-2 text-left"
+            onClick={() => setSelectedRepository(repo.fullName)}
+          >
+            <div className={`flex items-center justify-center w-12 h-12 rounded-full ${
+              selectedRepository === repo.fullName ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
+            } mb-2`}>
+              <GitBranch className="w-6 h-6" />
+            </div>
+            <div className="font-medium">{repo.name}</div>
+            <div className="text-xs text-muted-foreground">Last commit {repo.lastUpdatedText}</div>
+          </Button>
+        ))}
+      </div>
+    );
+  };
+
+  // Render file content or loading state
+  const renderFileContent = () => {
+    if (loading.content) {
+      return (
+        <div className="flex justify-center items-center h-40">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+        </div>
+      );
+    }
+
+    if (!selectedFile) {
+      return (
+        <div className="text-center text-muted-foreground p-4">
+          Please select a file to edit
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <h4 className="text-sm font-medium mb-2">File Content</h4>
+        <div className="bg-muted/30 border border-border rounded-md p-3 min-h-[100px] text-sm">
+          {fileContent ? (
+            <textarea 
+              className="w-full min-h-[100px] bg-transparent focus:outline-none"
+              value={fileContent}
+              onChange={(e) => setFileContent(e.target.value)}
+            />
+          ) : (
+            <div className="text-muted-foreground text-center py-2">
+              // No content or binary file
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Render file selection interface
+  const renderFileSelection = () => {
+    if (!selectedRepository) {
+      return (
+        <div className="text-center text-muted-foreground p-4">
+          Please select a repository first
+        </div>
+      );
+    }
+
+    if (loading.files) {
+      return (
+        <div className="flex justify-center items-center h-40">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-2">
+        <div className="text-sm font-medium mb-1">Current path: /{currentPath}</div>
+        <div className="border border-border rounded-md max-h-[200px] overflow-y-auto">
+          {files.length === 0 ? (
+            <div className="p-4 text-center text-muted-foreground">
+              No files found in this directory
+            </div>
+          ) : (
+            <div className="divide-y divide-border">
+              {files.map((file) => (
+                <div 
+                  key={file.path} 
+                  className={`p-2 flex items-center hover:bg-muted cursor-pointer ${
+                    selectedFile === file.path ? 'bg-muted' : ''
+                  }`}
+                  onClick={() => handleFileClick(file)}
+                >
+                  {file.isDirectory ? (
+                    <div className="mr-2 text-primary">
+                      <div className="flex items-center justify-center w-5 h-5">
+                        📁
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mr-2 text-muted-foreground">
+                      <div className="flex items-center justify-center w-5 h-5">
+                        📄
+                      </div>
+                    </div>
+                  )}
+                  <span className="text-sm">{file.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -186,438 +369,493 @@ export default function StreakManagerPage() {
       <h1 className="text-3xl font-bold mb-2">Streak Manager</h1>
       <p className="text-muted-foreground mb-6">Fix gaps in your contribution timeline</p>
       
-      <Alert className="mb-6 bg-amber-500/10 text-amber-500 border-amber-500/20">
-        <AlertTriangle className="h-4 w-4" />
-        <AlertDescription>
-          This application helps you recover missed GitHub contributions for legitimate work. Please use responsibly to reflect actual work done, not to create misleading activity patterns.
-        </AlertDescription>
-      </Alert>
-      
-      <Tabs defaultValue="missed-days" value={activeTab} onValueChange={setActiveTab} className="mb-8">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="missed-days">Fix Missed Days</TabsTrigger>
-          <TabsTrigger value="schedule">Schedule Commits</TabsTrigger>
-          <TabsTrigger value="bulk">Bulk Operations</TabsTrigger>
+      <div className="mb-6 bg-primary-foreground/10 p-4 rounded-lg border border-muted">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="text-primary w-5 h-5 mt-0.5 flex-shrink-0" />
+          <p className="text-sm">
+            This application helps you recover missed GitHub contributions for legitimate work. Please use responsibly to reflect actual work done, not to create misleading activity patterns.
+          </p>
+        </div>
+      </div>
+
+      <Tabs defaultValue="fix-missed-days" value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="w-full mb-6 bg-background border border-border">
+          <TabsTrigger value="fix-missed-days" className="flex-1">Fix Missed Days</TabsTrigger>
+          <TabsTrigger value="schedule-commits" className="flex-1">Schedule Commits</TabsTrigger>
+          <TabsTrigger value="bulk-operations" className="flex-1">Bulk Operations</TabsTrigger>
         </TabsList>
         
         {/* Fix Missed Days Tab */}
-        <TabsContent value="missed-days">
-          {/* Repository selection */}
-          <div className="mb-6">
-            <h2 className="text-xl font-semibold mb-4">Select Repository</h2>
-            <Card>
-              <CardHeader>
-                <CardTitle>Choose a repository</CardTitle>
-                <CardDescription>Select a repository to make backdated commits</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {isRepositoriesLoading ? (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <Skeleton className="h-24 w-full" />
-                    <Skeleton className="h-24 w-full" />
-                    <Skeleton className="h-24 w-full" />
-                  </div>
-                ) : repositories && repositories.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {repositories.map(repo => (
-                      <Button
-                        key={repo.id}
-                        variant={selectedRepo?.id === repo.id ? "default" : "outline"}
-                        className="h-auto py-6 flex flex-col items-center justify-center gap-2 text-left"
-                        onClick={() => handleSelectRepo({
-                          id: repo.id,
-                          name: repo.name,
-                          fullName: repo.fullName,
-                          lastCommit: getRelativeTimeString(repo.pushedAt || repo.updatedAt)
-                        })}
-                      >
-                        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 text-primary mb-2">
-                          <GitBranch className="w-6 h-6" />
-                        </div>
-                        <div className="font-medium">{repo.name}</div>
-                        <div className="text-xs text-muted-foreground">Last commit {getRelativeTimeString(repo.pushedAt || repo.updatedAt)}</div>
-                      </Button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center p-4">
-                    <p className="text-muted-foreground">No repositories found. Please connect your GitHub account.</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-          
-          {/* Backdating options */}
-          <div className="mb-6">
-            <h2 className="text-xl font-semibold mb-4">Backdating Options</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Date Selection</CardTitle>
-                  <CardDescription>Choose date and time for the backdated commit</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-4">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="h-5 w-5 text-muted-foreground" />
-                      <div className="text-sm font-medium">Select Date</div>
-                    </div>
-                    <div className="bg-muted p-4 rounded-lg text-center">
-                      <Input 
-                        type="date" 
-                        value={selectedDate ? format(selectedDate, 'yyyy-MM-dd') : ''} 
-                        onChange={(e) => setSelectedDate(e.target.value ? new Date(e.target.value) : null)}
-                        className="bg-secondary text-secondary-foreground"
-                      />
-                    </div>
-                    
-                    <div className="flex items-center gap-2 mt-2">
-                      <Clock className="h-5 w-5 text-muted-foreground" />
-                      <div className="text-sm font-medium">Select Time</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <select 
-                        className="flex-1 bg-secondary text-secondary-foreground px-3 py-2 rounded-md text-sm"
-                        value={selectedTime.hour}
-                        onChange={(e) => setSelectedTime({ ...selectedTime, hour: e.target.value })}
-                      >
-                        {Array.from({ length: 24 }).map((_, i) => (
-                          <option key={i} value={i.toString().padStart(2, '0')}>{i.toString().padStart(2, '0')}</option>
-                        ))}
-                      </select>
-                      
-                      <select 
-                        className="flex-1 bg-secondary text-secondary-foreground px-3 py-2 rounded-md text-sm"
-                        value={selectedTime.minute}
-                        onChange={(e) => setSelectedTime({ ...selectedTime, minute: e.target.value })}
-                      >
-                        {Array.from({ length: 60 }).map((_, i) => (
-                          <option key={i} value={i.toString().padStart(2, '0')}>{i.toString().padStart(2, '0')}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader>
-                  <CardTitle>Commit Details</CardTitle>
-                  <CardDescription>Enter commit message and select file(s) to modify</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-4">
-                    <div className="flex items-center gap-2">
-                      <MessageSquarePlus className="h-5 w-5 text-muted-foreground" />
-                      <div className="text-sm font-medium">Commit Message</div>
-                    </div>
-                    <Textarea 
-                      className="w-full min-h-[80px] p-3 bg-secondary text-secondary-foreground rounded-md text-sm" 
-                      placeholder="Enter commit message..."
-                      value={commitMessage}
-                      onChange={(e) => setCommitMessage(e.target.value)}
-                    />
-                    
-                    <div className="flex items-center gap-2 mt-2">
-                      <FolderOpen className="h-5 w-5 text-muted-foreground" />
-                      <div className="text-sm font-medium">Select File</div>
-                    </div>
-                    
-                    {selectedRepo ? (
-                      <div className="space-y-2">
-                        <FileBrowser 
-                          files={files}
-                          isLoading={isFilesLoading}
-                          onSelectFile={handleSelectFile}
-                          onNavigateToFolder={handleNavigateToFolder}
-                          currentPath={currentPath}
-                          selectedFilePath={filePath}
-                        />
-                        
-                        {filePath && (
-                          <div className="mt-2">
-                            <div className="text-sm font-medium mb-1">Selected: {filePath}</div>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="bg-muted p-4 rounded-lg text-center">
-                        <p className="text-sm text-muted-foreground">Please select a repository first</p>
-                      </div>
-                    )}
-                    
-                    {filePath && (
-                      <>
-                        <div className="flex items-center gap-2 mt-2">
-                          <div className="text-sm font-medium">File Content</div>
-                        </div>
-                        {isFileContentLoading ? (
-                          <Skeleton className="h-[120px] w-full" />
-                        ) : (
-                          <Textarea 
-                            className="w-full min-h-[200px] p-3 bg-secondary text-secondary-foreground rounded-md text-sm font-mono" 
-                            placeholder="Edit file content to include with your commit"
-                            value={fileContent}
-                            onChange={(e) => handleFileContentChange(e.target.value)}
-                          />
-                        )}
-                      </>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+        <TabsContent value="fix-missed-days" className="space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold mb-4">Fix Missed Contribution</h2>
+            <p className="text-muted-foreground mb-4">Create a legitimate commit for a day when local work wasn't pushed</p>
+            
+            {/* Repository selection */}
+            <div className="mb-6">
+              <h3 className="text-lg font-medium mb-3">Select Repository</h3>
+              {renderRepositories()}
             </div>
             
-            <div className="mt-6 flex justify-end gap-2">
-              <Button variant="outline">Cancel</Button>
-              <Button 
-                onClick={handleCreateBackdatedCommit} 
-                disabled={isCommitPending || !selectedRepo || !filePath || !commitMessage || !fileContent}
-              >
-                {isCommitPending ? 'Creating...' : 'Create Backdated Commit'}
-              </Button>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left column */}
+              <div className="space-y-6">
+                {/* Date Selection */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Calendar className="h-5 w-5 text-primary" />
+                      Select Date
+                    </CardTitle>
+                    <CardDescription>Choose the date for your backdated commit</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Input
+                      type="date"
+                      value={commitDate}
+                      onChange={(e) => setCommitDate(e.target.value)}
+                      className="w-full"
+                    />
+                    {commitDate && (
+                      <div className="text-xs text-muted-foreground mt-2">
+                        {new Date(commitDate).toLocaleDateString('en-US', { 
+                          weekday: 'long',
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric'
+                        })}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+                
+                {/* Time Selection */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Clock className="h-5 w-5 text-primary" />
+                      Select Time
+                    </CardTitle>
+                    <CardDescription>Choose a time that matches your typical activity pattern</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Input
+                      type="time"
+                      value={commitTime}
+                      onChange={(e) => setCommitTime(e.target.value)}
+                      className="w-full"
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+              
+              {/* Right column */}
+              <div className="space-y-6">
+                {/* Commit Message */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <MessageSquarePlus className="h-5 w-5 text-primary" />
+                      Commit Message
+                    </CardTitle>
+                    <CardDescription>Enter a descriptive commit message for the work done</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Textarea 
+                      placeholder="Update documentation with new API endpoints"
+                      value={commitMessage}
+                      onChange={(e) => setCommitMessage(e.target.value)}
+                      className="w-full min-h-[100px]"
+                    />
+                  </CardContent>
+                </Card>
+                
+                {/* File Selection */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <FileEdit className="h-5 w-5 text-primary" />
+                      File to Change
+                    </CardTitle>
+                    <CardDescription>Select a file to be modified with your commit</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {renderFileSelection()}
+                    {selectedFile && (
+                      <div className="mt-3">
+                        {renderFileContent()}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             </div>
-          </div>
-          
-          {/* Verification Panel */}
-          {selectedRepo && selectedDate && commitMessage && filePath && (
-            <Card className="mb-6">
+            
+            {/* Verification panel */}
+            <Card className="mt-6">
               <CardHeader>
                 <CardTitle>Verification</CardTitle>
                 <CardDescription>Check details before creating commit</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-4">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <div className="text-sm font-medium">Repository</div>
-                      <div className="text-sm text-muted-foreground">{selectedRepo.name}</div>
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium">Date</div>
-                      <div className="text-sm text-muted-foreground">
-                        {selectedDate ? format(selectedDate, 'PPP') : 'Not selected'}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium">Time</div>
-                      <div className="text-sm text-muted-foreground">
-                        {selectedTime.hour}:{selectedTime.minute}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium">File</div>
-                      <div className="text-sm text-muted-foreground">{filePath}</div>
-                    </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Repository</h4>
+                    <p className="text-sm text-muted-foreground mb-3">{selectedRepository || "Not selected"}</p>
+                    
+                    <h4 className="text-sm font-medium mb-1">Date</h4>
+                    <p className="text-sm text-muted-foreground mb-3">{commitDate || "Not selected"}</p>
+                    
+                    <h4 className="text-sm font-medium mb-1">Time</h4>
+                    <p className="text-sm text-muted-foreground">{commitTime || "Not selected"}</p>
                   </div>
                   <div>
-                    <div className="text-sm font-medium">Message</div>
-                    <div className="text-sm text-muted-foreground">{commitMessage}</div>
+                    <h4 className="text-sm font-medium mb-1">Message</h4>
+                    <p className="text-sm text-muted-foreground mb-3">{commitMessage || "No message"}</p>
+                    
+                    <h4 className="text-sm font-medium mb-1">File</h4>
+                    <p className="text-sm text-muted-foreground">{selectedFile || "No file selected"}</p>
+                  </div>
+                </div>
+                
+                <div className="mt-4 border-t border-border pt-4">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    This will create a legitimate commit that reflects work you did locally but didn't push.
+                  </p>
+                  {(!selectedRepository || !commitDate || !commitTime || !commitMessage || !selectedFile) && (
+                    <div className="text-amber-500 text-sm mb-3">
+                      Please complete all fields
+                    </div>
+                  )}
+                  <Button 
+                    className="w-full"
+                    disabled={!selectedRepository || !commitDate || !commitTime || !commitMessage || !selectedFile || loading.repositories || loading.files || loading.content}
+                    onClick={handleCreateBackdatedCommit}
+                  >
+                    {loading.repositories || loading.files || loading.content ? (
+                      <span className="flex items-center">
+                        <span className="animate-spin h-4 w-4 mr-2 border-t-2 border-b-2 border-primary-foreground rounded-full"></span>
+                        Processing...
+                      </span>
+                    ) : "Create Backdated Commit"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+        
+        {/* Schedule Commits Tab */}
+        <TabsContent value="schedule-commits" className="space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold mb-4">Schedule Future Commits</h2>
+            <p className="text-muted-foreground mb-4">Plan commits for days when you know you'll be away</p>
+            
+            {/* Repository selection */}
+            <div className="mb-6">
+              <h3 className="text-lg font-medium mb-3">Select Repository</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {repositories.map((repo) => (
+                  <Button
+                    key={repo.fullName}
+                    variant={selectedRepository === repo.fullName ? "default" : "outline"}
+                    className="h-auto py-6 flex flex-col items-center justify-center gap-2 text-left"
+                    onClick={() => setSelectedRepository(repo.fullName)}
+                  >
+                    <div className={`flex items-center justify-center w-12 h-12 rounded-full ${
+                      selectedRepository === repo.fullName ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
+                    } mb-2`}>
+                      <GitBranch className="w-6 h-6" />
+                    </div>
+                    <div className="font-medium">{repo.name}</div>
+                    <div className="text-xs text-muted-foreground">Last commit {repo.lastUpdatedText}</div>
+                  </Button>
+                ))}
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left column */}
+              <div className="space-y-6">
+                {/* Date Selection */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <CalendarDays className="h-5 w-5 text-primary" />
+                      Schedule Date
+                    </CardTitle>
+                    <CardDescription>Choose the future date for your scheduled commit</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Input
+                      type="date"
+                      value={commitDate}
+                      onChange={(e) => setCommitDate(e.target.value)}
+                      className="w-full"
+                    />
+                    <div className="text-xs text-muted-foreground mt-2">
+                      Saturday
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                {/* Time Selection */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Clock className="h-5 w-5 text-primary" />
+                      Commit Time
+                    </CardTitle>
+                    <CardDescription>Select a time that matches your typical activity pattern</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Input
+                      type="time"
+                      value={commitTime}
+                      onChange={(e) => setCommitTime(e.target.value)}
+                      className="w-full"
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+              
+              {/* Right column */}
+              <div className="space-y-6">
+                {/* Commit Message */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <MessageSquarePlus className="h-5 w-5 text-primary" />
+                      Commit Message
+                    </CardTitle>
+                    <CardDescription>Enter a descriptive commit message for the work to be done</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Textarea 
+                      placeholder="Update documentation with new API endpoints"
+                      value={commitMessage}
+                      onChange={(e) => setCommitMessage(e.target.value)}
+                      className="w-full min-h-[100px]"
+                    />
+                  </CardContent>
+                </Card>
+                
+                {/* Files to Change */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <FileEdit className="h-5 w-5 text-primary" />
+                      Files to Change
+                    </CardTitle>
+                    <CardDescription>Add one or more files to be modified with each commit</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Input 
+                      placeholder="docs/api-reference.md"
+                      value={selectedFile}
+                      onChange={(e) => setSelectedFile(e.target.value)}
+                      className="w-full mb-2"
+                    />
+                    <Button variant="outline" size="sm" className="w-full mb-3">
+                      + Add to List
+                    </Button>
+                    <div className="text-xs text-muted-foreground mb-2">
+                      Add one or more files to be modified with each commit
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+            
+            {/* Schedule Summary */}
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle>Schedule Summary</CardTitle>
+                <CardDescription>Verify details before scheduling</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Repository:</h4>
+                    <p className="text-sm text-muted-foreground mb-3">{selectedRepository || "Not selected"}</p>
+                    
+                    <h4 className="text-sm font-medium mb-1">Date Range:</h4>
+                    <p className="text-sm text-muted-foreground mb-3">{commitDate || "Not selected"}</p>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Scheduled For:</h4>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {commitDate && commitTime ? `${commitDate} at ${commitTime}` : "Not scheduled"}
+                    </p>
+                    
+                    <h4 className="text-sm font-medium mb-1">Files:</h4>
+                    <p className="text-sm text-muted-foreground">{selectedFile || "No files selected"}</p>
+                  </div>
+                </div>
+                
+                <div className="mt-4 border-t border-border pt-4">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    This will schedule a commit to happen automatically on the specified date and time.
+                  </p>
+                  {(!selectedRepository || !commitDate || !commitTime || !commitMessage || !selectedFile) && (
+                    <div className="text-amber-500 text-sm mb-3">
+                      Please complete all fields
+                    </div>
+                  )}
+                  <Button 
+                    className="w-full"
+                    disabled={!selectedRepository || !commitDate || !commitTime || !commitMessage || !selectedFile}
+                  >
+                    Schedule Commit
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Scheduled Commits List */}
+            <div className="mt-8">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium">Scheduled Commits</h3>
+                <Button variant="outline" size="sm">
+                  Clean All Pending
+                </Button>
+              </div>
+              <Card>
+                <CardContent className="p-6">
+                  <div className="text-center py-6 text-muted-foreground">
+                    No scheduled commits found
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </TabsContent>
+        
+        {/* Bulk Operations Tab */}
+        <TabsContent value="bulk-operations" className="space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold mb-4">Bulk Operations</h2>
+            <p className="text-muted-foreground mb-4">Perform actions across multiple dates at once</p>
+            
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Date Range Selection</CardTitle>
+                <CardDescription>Select a range of dates to operate on</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium block mb-2">Start Date</label>
+                    <Input type="date" className="w-full" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium block mb-2">End Date</label>
+                    <Input type="date" className="w-full" />
                   </div>
                 </div>
               </CardContent>
             </Card>
-          )}
-        </TabsContent>
-        
-        {/* Schedule Commits Tab */}
-        <TabsContent value="schedule">
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Schedule Future Commits</CardTitle>
-              <CardDescription>Plan contributions ahead of time</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="grid gap-4">
-                  <div className="flex items-center gap-2">
-                    <GitBranch className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Select Repository</div>
-                  </div>
-                  <div className="bg-muted p-4 rounded-lg">
-                    {isRepositoriesLoading ? (
-                      <Skeleton className="h-10 w-full" />
-                    ) : repositories && repositories.length > 0 ? (
-                      <select className="w-full bg-secondary text-secondary-foreground px-3 py-2 rounded-md text-sm">
-                        <option value="">Select a repository</option>
-                        {repositories.map(repo => (
-                          <option key={repo.id} value={repo.id}>{repo.name}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">No repositories available</p>
-                    )}
-                  </div>
-                  
-                  <div className="flex items-center gap-2 mt-2">
-                    <CalendarDays className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Schedule Date</div>
-                  </div>
-                  <Input type="date" className="bg-secondary text-secondary-foreground" />
-                  
-                  <div className="flex items-center gap-2 mt-2">
-                    <Clock className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Schedule Time</div>
-                  </div>
-                  <Input type="time" className="bg-secondary text-secondary-foreground" />
+            
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Select Repository</CardTitle>
+                <CardDescription>Choose which repository to apply bulk operations to</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {repositories.map((repo) => (
+                    <Button
+                      key={repo.fullName}
+                      variant={selectedRepository === repo.fullName ? "default" : "outline"}
+                      className="h-auto py-6 flex flex-col items-center justify-center gap-2 text-left"
+                      onClick={() => setSelectedRepository(repo.fullName)}
+                    >
+                      <div className={`flex items-center justify-center w-12 h-12 rounded-full ${
+                        selectedRepository === repo.fullName ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
+                      } mb-2`}>
+                        <GitBranch className="w-6 h-6" />
+                      </div>
+                      <div className="font-medium">{repo.name}</div>
+                      <div className="text-xs text-muted-foreground">Last commit {repo.lastUpdatedText}</div>
+                    </Button>
+                  ))}
                 </div>
-                
-                <div className="grid gap-4">
-                  <div className="flex items-center gap-2">
-                    <MessageSquarePlus className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Commit Message</div>
-                  </div>
-                  <Textarea 
-                    className="w-full min-h-[100px] p-3 bg-secondary text-secondary-foreground rounded-md text-sm" 
-                    placeholder="Enter commit message..."
-                  />
-                  
-                  <div className="flex items-center gap-2 mt-2">
-                    <GitBranch className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Select File</div>
-                  </div>
-                  <Input 
-                    className="bg-secondary text-secondary-foreground" 
-                    placeholder="docs/changelog.md"
-                  />
-                </div>
-              </div>
-              
-              <div className="mt-6 flex justify-end gap-2">
-                <Button variant="outline">Cancel</Button>
-                <Button onClick={handleScheduleCommit}>Schedule Commit</Button>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardHeader>
-              <CardTitle>Scheduled Commits</CardTitle>
-              <CardDescription>View and manage your scheduled contributions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-center text-muted-foreground py-4">No scheduled commits yet.</p>
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        {/* Bulk Operations Tab */}
-        <TabsContent value="bulk">
-          <Card>
-            <CardHeader>
-              <CardTitle>Bulk Operations</CardTitle>
-              <CardDescription>Create multiple commits using a pattern</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="grid gap-4">
-                  <div className="flex items-center gap-2">
-                    <GitBranch className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Select Repository</div>
-                  </div>
-                  <div className="bg-muted p-4 rounded-lg">
-                    {isRepositoriesLoading ? (
-                      <Skeleton className="h-10 w-full" />
-                    ) : repositories && repositories.length > 0 ? (
-                      <select className="w-full bg-secondary text-secondary-foreground px-3 py-2 rounded-md text-sm">
-                        <option value="">Select a repository</option>
-                        {repositories.map(repo => (
-                          <option key={repo.id} value={repo.id}>{repo.name}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">No repositories available</p>
-                    )}
-                  </div>
-                  
-                  <div className="flex items-center gap-2 mt-2">
-                    <ClipboardList className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Operation Type</div>
-                  </div>
-                  <select className="w-full bg-secondary text-secondary-foreground px-3 py-2 rounded-md text-sm">
-                    <option value="pattern">Fill Pattern (Regular Schedule)</option>
-                    <option value="recovery">Recovery (Fill Gaps)</option>
-                    <option value="randomize">Randomize (Natural Pattern)</option>
-                  </select>
-                  
-                  <div className="flex items-center gap-2 mt-2">
-                    <CalendarDays className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Date Range</div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <div className="text-xs text-muted-foreground mb-1">Start Date</div>
-                      <Input type="date" className="bg-secondary text-secondary-foreground" />
-                    </div>
-                    <div>
-                      <div className="text-xs text-muted-foreground mb-1">End Date</div>
-                      <Input type="date" className="bg-secondary text-secondary-foreground" />
+              </CardContent>
+            </Card>
+            
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Operation Settings</CardTitle>
+                <CardDescription>Configure how the bulk operation should work</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium block mb-2">Operation Type</label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <Button variant="outline" className="justify-start">
+                        <GitCommit className="mr-2 h-4 w-4" />
+                        Fix Contribution Gaps
+                      </Button>
+                      <Button variant="outline" className="justify-start">
+                        <CalendarDays className="mr-2 h-4 w-4" />
+                        Schedule Regular Commits
+                      </Button>
                     </div>
                   </div>
-                </div>
-                
-                <div className="grid gap-4">
-                  <div className="flex items-center gap-2">
-                    <MessageSquarePlus className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Commit Message Template</div>
-                  </div>
-                  <Textarea 
-                    className="w-full min-h-[100px] p-3 bg-secondary text-secondary-foreground rounded-md text-sm" 
-                    placeholder="Enter commit message template..."
-                    defaultValue="Update documentation for {{date}}"
-                  />
                   
-                  <div className="flex items-center gap-2 mt-2">
-                    <GitBranch className="h-5 w-5 text-muted-foreground" />
-                    <div className="text-sm font-medium">Files to Modify</div>
+                  <div>
+                    <label className="text-sm font-medium block mb-2">Commit Message Template</label>
+                    <Textarea 
+                      placeholder="Update documentation for {'{{date}}'}"
+                      className="w-full"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Use {"{{date}}"} to include the date in your message
+                    </p>
                   </div>
-                  <Input 
-                    className="bg-secondary text-secondary-foreground" 
-                    placeholder="docs/changelog.md, README.md"
-                  />
                   
-                  <div className="flex items-center gap-2 mt-2">
-                    <div className="text-sm font-medium">Frequency</div>
+                  <div>
+                    <label className="text-sm font-medium block mb-2">Files to Modify</label>
+                    <Input placeholder="docs/README.md" className="w-full mb-2" />
+                    <Button variant="outline" size="sm" className="w-full">
+                      + Add File
+                    </Button>
                   </div>
-                  <select className="w-full bg-secondary text-secondary-foreground px-3 py-2 rounded-md text-sm">
-                    <option value="daily">Daily</option>
-                    <option value="weekdays">Weekdays Only</option>
-                    <option value="weekends">Weekends Only</option>
-                    <option value="custom">Custom Pattern</option>
-                  </select>
                 </div>
-              </div>
-              
-              <div className="mt-6 flex justify-end gap-2">
-                <Button variant="outline">Cancel</Button>
-                <Button onClick={handleBulkOperation}>Create Bulk Operations</Button>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardHeader>
+                <CardTitle>Confirmation</CardTitle>
+                <CardDescription>Review details before proceeding with bulk operation</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    You are about to perform a bulk operation that will create commits across multiple dates. 
+                    Please use this feature responsibly.
+                  </p>
+                  
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-md">
+                    <div className="flex gap-2 text-amber-500">
+                      <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                      <p className="text-sm">
+                        This will create multiple commits at once. Make sure these reflect actual work you've done.
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <Button className="w-full">
+                    Execute Bulk Operation
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </DashboardLayout>
   );
-}
-
-// Helper function to format relative time
-function getRelativeTimeString(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSec = Math.round(diffMs / 1000);
-  const diffMin = Math.round(diffSec / 60);
-  const diffHour = Math.round(diffMin / 60);
-  const diffDay = Math.round(diffHour / 24);
-  const diffWeek = Math.round(diffDay / 7);
-  const diffMonth = Math.round(diffDay / 30);
-  const diffYear = Math.round(diffDay / 365);
-
-  if (diffSec < 60) return 'just now';
-  if (diffMin < 60) return `${diffMin} minutes ago`;
-  if (diffHour < 24) return `${diffHour} hours ago`;
-  if (diffDay < 7) return `${diffDay} days ago`;
-  if (diffWeek < 4) return `${diffWeek} weeks ago`;
-  if (diffMonth < 12) return `${diffMonth} months ago`;
-  return `${diffYear} years ago`;
 } 

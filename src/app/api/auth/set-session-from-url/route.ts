@@ -61,12 +61,19 @@ export async function POST(request: Request) {
     const githubUsername = data.session.user.user_metadata?.user_name || null;
     console.log('GitHub username from metadata:', githubUsername);
     
+    // Extract GitHub access token from provider token or OAuth access token
+    const githubAccessToken = data.session.provider_token || 
+                             data.session.access_token || 
+                             extractParameterFromUrl(url, 'access_token') || 
+                             null;
+    console.log('GitHub access token available:', !!githubAccessToken);
+    
     // Ensure the user record exists in our database after successful authentication
     try {
       // First check if user already exists
       const { data: existingUser, error: lookupError } = await supabase
         .from('users')
-        .select('id, auth_id, github_username')
+        .select('id, auth_id, github_username, github_access_token')
         .eq('auth_id', data.session.user.id)
         .single();
         
@@ -87,13 +94,20 @@ export async function POST(request: Request) {
                     data.session.user.user_metadata?.user_name || 
                     data.session.user.user_metadata?.name || 
                     'GitHub User',
-        github_username: githubUsername
+        github_username: githubUsername,
+        github_access_token: githubAccessToken
       };
       
       // Ensure we're not overwriting existing github_username with null
       if (!userData.github_username && existingUser?.github_username) {
         console.log('Preserving existing github_username:', existingUser.github_username);
         userData.github_username = existingUser.github_username;
+      }
+      
+      // Ensure we're not overwriting existing github_access_token with null
+      if (!userData.github_access_token && existingUser?.github_access_token) {
+        console.log('Preserving existing github_access_token');
+        userData.github_access_token = existingUser.github_access_token;
       }
       
       const { error: upsertError } = await supabase.from('users').upsert(
@@ -105,6 +119,7 @@ export async function POST(request: Request) {
         console.error('Error ensuring user record exists:', upsertError);
       } else {
         console.log('User record created/updated in database with github_username:', userData.github_username);
+        console.log('GitHub token stored:', !!userData.github_access_token);
       }
     } catch (upsertErr) {
       console.error('Exception creating user record:', upsertErr);

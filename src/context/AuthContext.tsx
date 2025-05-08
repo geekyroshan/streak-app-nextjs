@@ -197,7 +197,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         provider: 'github',
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
-          scopes: 'read:user user:email',
+          scopes: 'read:user user:email repo',
           skipBrowserRedirect: false
         }
       });

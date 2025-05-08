@@ -20,11 +20,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   return withGitHubAuth(req, async (req, token) => {
     try {
       // Get auth session for user ID
-      const cookieStore = await cookies();
-      const supabase = createRouteHandlerClient({ 
-        cookies: () => cookieStore
-      });
-      
+      const cookieStore = cookies();
+      const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError || !session) {

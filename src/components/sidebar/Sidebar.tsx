@@ -30,6 +30,11 @@ const navItems: NavItem[] = [
     href: "/repositories",
   },
   {
+    label: "Streak Manager",
+    icon: <GitCommit className="w-5 h-5" />,
+    href: "/streak-manager",
+  },
+  {
     label: "Activity",
     icon: <Calendar className="w-5 h-5" />,
     href: "/activity",
@@ -38,11 +43,6 @@ const navItems: NavItem[] = [
     label: "Analytics",
     icon: <BarChart2 className="w-5 h-5" />,
     href: "/analytics",
-  },
-  {
-    label: "Streak Manager",
-    icon: <GitCommit className="w-5 h-5" />,
-    href: "/streak-manager",
   },
   {
     label: "Settings",

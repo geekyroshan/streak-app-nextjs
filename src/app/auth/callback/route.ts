@@ -46,10 +46,15 @@ export async function GET(request: NextRequest) {
           const githubUsername = data.session.user.user_metadata?.user_name || null;
           console.log('GitHub username from metadata:', githubUsername);
           
+          // Extract GitHub access token from provider token
+          // This is where we get the token from the OAuth provider
+          const githubAccessToken = data.session.provider_token || null;
+          console.log('GitHub access token available:', !!githubAccessToken);
+          
           // First check if user already exists
           const { data: existingUser, error: lookupError } = await supabase
             .from('users')
-            .select('id, auth_id, github_username')
+            .select('id, auth_id, github_username, github_access_token')
             .eq('auth_id', data.session.user.id)
             .single();
             
@@ -70,13 +75,20 @@ export async function GET(request: NextRequest) {
                     data.session.user.user_metadata?.user_name || 
                     data.session.user.user_metadata?.name || 
                     'GitHub User',
-            github_username: githubUsername
+            github_username: githubUsername,
+            github_access_token: githubAccessToken
           };
           
           // Ensure we're not overwriting existing github_username with null
           if (!userData.github_username && existingUser?.github_username) {
             console.log('Preserving existing github_username in callback:', existingUser.github_username);
             userData.github_username = existingUser.github_username;
+          }
+          
+          // Ensure we're not overwriting existing github_access_token with null
+          if (!userData.github_access_token && existingUser?.github_access_token) {
+            console.log('Preserving existing github_access_token in callback');
+            userData.github_access_token = existingUser.github_access_token;
           }
           
           // Ensure user record exists in the database
@@ -89,6 +101,7 @@ export async function GET(request: NextRequest) {
             console.error('Error upserting user record in callback:', upsertError);
           } else {
             console.log('User record created/updated in callback handler with github_username:', userData.github_username);
+            console.log('GitHub token stored:', !!userData.github_access_token);
           }
         } catch (dbError) {
           console.error('Error creating user record in callback:', dbError);
