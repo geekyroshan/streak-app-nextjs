@@ -1,7 +1,12 @@
 import { createServerSupabaseClient } from '@/lib/server-supabase';
-import { createGitHubClient } from '@/lib/github-client';
-import { gql } from '@apollo/client';
 import { NextRequest, NextResponse } from 'next/server';
+import { exec } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 // Define body type for the request
 interface CreateCommitBody {
@@ -15,12 +20,23 @@ interface CreateCommitBody {
 
 /**
  * POST handler for /api/github/create-commit
- * Creates a backdated commit on GitHub
+ * Creates a properly backdated commit on GitHub by using Git CLI
  */
 export async function POST(request: NextRequest) {
+  let tempDir = '';
+  
   try {
     // Parse request body
     const body: CreateCommitBody = await request.json();
+    
+    console.log('Creating backdated commit with payload:', {
+      repoName: body.repoName,
+      filePath: body.filePath,
+      message: body.commitMessage,
+      hasContent: !!body.fileContent,
+      date: body.date,
+      time: body.time
+    });
     
     // Validate required fields
     if (!body.repoName || !body.filePath || !body.commitMessage || !body.fileContent || !body.date || !body.time) {
@@ -57,167 +73,103 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Create GitHub API client with user's access token
-    const githubClient = createGitHubClient(userData.github_access_token);
+    // Create a temporary directory for Git operations
+    tempDir = path.join(os.tmpdir(), `git-backdate-${Date.now()}`);
+    await fs.promises.mkdir(tempDir, { recursive: true });
     
-    // Extract owner and repo name from the full repository name
+    console.log(`Created temporary directory: ${tempDir}`);
+    
+    // Extract owner and repo from repo name
     const [owner, repo] = body.repoName.includes('/') 
       ? body.repoName.split('/')
       : [userData.github_username, body.repoName];
+      
+    const repoUrl = `https://${userData.github_access_token}@github.com/${owner}/${repo}.git`;
     
-    // First, we need to get the repository default branch and the current commit to use as parent
-    const REPOSITORY_INFO_QUERY = gql`
-      query GetRepositoryInfo($owner: String!, $name: String!) {
-        repository(owner: $owner, name: $name) {
-          defaultBranchRef {
-            name
-            target {
-              ... on Commit {
-                oid
-              }
-            }
-          }
-        }
-      }
-    `;
+    // Create file directory structure if needed
+    const fileDir = path.dirname(path.join(tempDir, body.filePath));
+    await fs.promises.mkdir(fileDir, { recursive: true });
     
-    const repoInfoResult = await githubClient.query({
-      query: REPOSITORY_INFO_QUERY,
-      variables: {
-        owner,
-        name: repo
-      }
-    });
-    
-    if (!repoInfoResult.data.repository) {
-      return NextResponse.json(
-        { error: `Repository ${body.repoName} not found` },
-        { status: 404 }
-      );
-    }
-    
-    const defaultBranch = repoInfoResult.data.repository.defaultBranchRef.name;
-    const parentCommitId = repoInfoResult.data.repository.defaultBranchRef.target.oid;
-    
-    // Next, we need to get the current file content to get its blob data
-    const GET_FILE_QUERY = gql`
-      query GetFileInfo($owner: String!, $name: String!, $expression: String!) {
-        repository(owner: $owner, name: $name) {
-          object(expression: $expression) {
-            ... on Blob {
-              oid
-              text
-            }
-          }
-        }
-      }
-    `;
-    
-    const fileResult = await githubClient.query({
-      query: GET_FILE_QUERY,
-      variables: {
-        owner,
-        name: repo,
-        expression: `${defaultBranch}:${body.filePath}`
-      }
-    });
-    
-    // If file doesn't exist, we'll create it
-    const fileExists = fileResult.data.repository?.object;
-    
-    // Create a commit with the backdated timestamp
-    // Combine date and time into a valid ISO string
+    // Format the backdated timestamp
     const [year, month, day] = body.date.split('-').map(Number);
     const [hour, minute] = body.time.split(':').map(Number);
-    
-    // Create a valid Date object in local timezone
     const backdatedDate = new Date(year, month - 1, day, hour, minute);
+    const formattedDate = backdatedDate.toISOString();
     
-    // Create the mutation to create a commit
-    const CREATE_COMMIT_MUTATION = gql`
-      mutation CreateCommit($input: CreateCommitOnBranchInput!) {
-        createCommitOnBranch(input: $input) {
-          commit {
-            url
-            oid
-          }
-        }
-      }
+    // Clone the repository (shallow clone to save time/bandwidth)
+    console.log(`Cloning repository: ${owner}/${repo}`);
+    await execAsync(`git clone --depth 1 ${repoUrl} ${tempDir}`);
+    
+    // Change to the repo directory
+    process.chdir(tempDir);
+    
+    // Create or update the file with new content
+    console.log(`Writing file: ${body.filePath}`);
+    await fs.promises.writeFile(path.join(tempDir, body.filePath), body.fileContent);
+    
+    // Configure git user
+    await execAsync(`git config user.name "${userData.github_username || 'GitHub User'}"`);
+    await execAsync(`git config user.email "${session.user.email || 'user@example.com'}"`);
+    
+    // Add the file to git
+    await execAsync(`git add "${body.filePath}"`);
+    
+    // Make the backdated commit using environment variables
+    console.log(`Creating backdated commit for: ${formattedDate}`);
+    const commitCommand = `
+      GIT_AUTHOR_DATE="${formattedDate}" \
+      GIT_COMMITTER_DATE="${formattedDate}" \
+      git commit -m "${body.commitMessage.replace(/"/g, '\\"')}"
     `;
     
-    // Define the file changes
-    const fileChanges = {
-      path: body.filePath,
-      contents: Buffer.from(body.fileContent).toString('base64'),
-      encoding: "base64"
-    };
+    const { stdout: commitOutput } = await execAsync(commitCommand);
+    console.log('Commit output:', commitOutput);
     
-    // Execute the mutation to create a commit
-    const commitResult = await githubClient.mutate({
-      mutation: CREATE_COMMIT_MUTATION,
-      variables: {
-        input: {
-          branch: {
-            repositoryNameWithOwner: `${owner}/${repo}`,
-            branchName: defaultBranch
-          },
-          message: {
-            headline: body.commitMessage
-          },
-          fileChanges: {
-            additions: [fileChanges]
-          },
-          expectedHeadOid: parentCommitId,
-          authorEmail: session.user.email || "user@example.com",
-          authorName: userData.github_username || session.user.user_metadata?.full_name || "GitHub User",
-          // Use the backdated timestamp
-          authoredDate: backdatedDate.toISOString()
-        }
-      }
-    });
+    // Extract commit hash from the output
+    const commitHash = commitOutput.match(/\[main\s+([0-9a-f]+)\]/)?.[1] || '';
     
-    // Check if the commit was created successfully
-    if (!commitResult.data?.createCommitOnBranch?.commit) {
-      return NextResponse.json(
-        { error: 'Failed to create commit' },
-        { status: 500 }
-      );
-    }
+    // Push the changes to GitHub
+    console.log('Pushing changes to GitHub');
+    await execAsync('git push origin main');
     
-    // Return successful response with commit details
+    // Clean up the temporary directory
+    process.chdir(os.tmpdir()); // Move out of the directory before deleting
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+    
+    // Construct commit URL
+    const commitUrl = `https://github.com/${owner}/${repo}/commit/${commitHash}`;
+    
+    // Return successful response
     return NextResponse.json({
       success: true,
-      commitUrl: commitResult.data.createCommitOnBranch.commit.url,
-      commitId: commitResult.data.createCommitOnBranch.commit.oid,
-      timestamp: backdatedDate.toISOString()
+      commitUrl,
+      commitHash,
+      timestamp: formattedDate,
+      message: 'Successfully created backdated commit'
     });
     
   } catch (error: unknown) {
     console.error('Error creating backdated commit:', error);
     
+    // Clean up temporary directory if it exists
+    if (tempDir) {
+      try {
+        process.chdir(os.tmpdir()); // Move out of the directory before deleting
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        console.error('Error cleaning up temporary directory:', cleanupError);
+      }
+    }
+    
     // Get error message
     const errorMessage = error instanceof Error ? error.message : String(error);
-    
-    // Check for specific error types
-    const isRateLimitError = errorMessage.includes('API rate limit exceeded');
-    const isAuthError = errorMessage.includes('authentication') || errorMessage.includes('unauthorized');
     
     // Return appropriate error response
     return NextResponse.json(
       { 
-        error: isRateLimitError 
-          ? 'GitHub API rate limit exceeded. Please try again later.'
-          : isAuthError
-            ? 'GitHub authentication error. Please reconnect your GitHub account.'
-            : 'Failed to create backdated commit'
+        error: `Failed to create backdated commit: ${errorMessage}`
       },
-      { 
-        status: isRateLimitError 
-          ? 429 
-          : isAuthError 
-            ? 401 
-            : 500 
-      }
+      { status: 500 }
     );
   }
 } 

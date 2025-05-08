@@ -214,9 +214,20 @@ export default function StreakManagerPage() {
       // Show success message
       showToast('Backdated commit created successfully!', 'success');
       
-      // Reset form or redirect to view commit
-      // Optional: add confirmation UI with link to view the commit
-      console.log('Commit created:', data);
+      // Reset form 
+      setFileContent('');
+      setCommitMessage('');
+      
+      // Show the commit URL if available
+      if (data.commitUrl) {
+        showToast(
+          `Backdated commit created! View on GitHub: ${data.commitUrl}`,
+          'success',
+          10000
+        );
+      }
+      
+      console.log('Backdated commit created:', data);
       
     } catch (error) {
       console.error('Error creating backdated commit:', error);
@@ -520,8 +531,16 @@ export default function StreakManagerPage() {
                 
                 <div className="mt-4 border-t border-border pt-4">
                   <p className="text-sm text-muted-foreground mb-3">
-                    This will create a legitimate commit that reflects work you did locally but didn't push.
+                    This will create a commit with the selected date and time. The commit will appear in your GitHub contribution graph with the chosen backdated timestamp.
                   </p>
+                  <div className="p-3 mb-3 bg-amber-500/10 border border-amber-500/30 rounded-md">
+                    <div className="flex gap-2 text-amber-600 dark:text-amber-400">
+                      <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                      <p className="text-sm">
+                        Use this feature responsibly to reflect actual work you've done. Excessive backdating may violate GitHub's terms of service.
+                      </p>
+                    </div>
+                  </div>
                   {(!selectedRepository || !commitDate || !commitTime || !commitMessage || !selectedFile) && (
                     <div className="text-amber-500 text-sm mb-3">
                       Please complete all fields

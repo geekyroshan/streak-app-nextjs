@@ -28,17 +28,25 @@ export function useToast(): ToastHookReturn {
   const showToast = (
     message: string, 
     type: ToastType = "info", 
-    duration: number = 5000
+    duration: number | { duration?: number } = 5000
   ): void => {
     const id = Date.now().toString();
-    const newToast: Toast = { id, message, type, duration };
+    
+    // Handle if duration is passed as an object
+    const actualDuration = typeof duration === 'object' && duration.duration !== undefined 
+      ? duration.duration 
+      : typeof duration === 'number' 
+        ? duration 
+        : 5000;
+        
+    const newToast: Toast = { id, message, type, duration: actualDuration };
     
     setToasts((prev) => [...prev, newToast]);
 
-    if (duration !== Infinity) {
+    if (actualDuration !== Infinity) {
       setTimeout(() => {
         dismissToast(id);
-      }, duration);
+      }, actualDuration);
     }
   };
 
