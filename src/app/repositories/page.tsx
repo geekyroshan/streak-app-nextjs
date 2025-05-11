@@ -2,9 +2,8 @@
 
 import { DashboardLayout } from '@/components/dashboard-layout/DashboardLayout';
 import { RepositoryCard } from '@/components/repository/RepositoryCard';
-import { useGitHubRepositories, transformRepositoryData } from '@/hooks/github/use-github-repositories';
 import { useAuth } from '@/context/AuthContext';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function RepositoriesPage() {
@@ -18,25 +17,58 @@ export default function RepositoriesPage() {
     return user?.user_metadata?.user_name || '';
   }, [user]);
 
-  // Fetch GitHub repositories with filters
-  const {
-    data: repositoriesData,
-    isLoading,
-    error,
-    refetch
-  } = useGitHubRepositories(githubUsername, {
-    language,
-    sort: sortOption,
-    direction: sortDirection,
-    perPage: 20,
-    enabled: !!githubUsername
-  });
+  // State for direct API call
+  const [repositories, setRepositories] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
-  // Process repositories data
-  const repositories = useMemo(() => {
-    if (!repositoriesData?.data) return [];
-    return transformRepositoryData(repositoriesData.data);
-  }, [repositoriesData]);
+  // Fetch repositories directly using the API
+  useEffect(() => {
+    if (!githubUsername) {
+      setIsLoading(false);
+      return;
+    }
+    
+    async function fetchRepositories() {
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        // Build params for filtering
+        const params = new URLSearchParams({
+          sort: sortOption,
+          direction: sortDirection,
+          per_page: '20',
+        });
+        
+        // Add language filter if set
+        if (language && language !== 'All languages') {
+          params.append('language', language);
+        }
+        
+        const response = await fetch(`/api/github/repositories?${params.toString()}`);
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch repositories');
+        }
+        
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        setRepositories(data.repositories || []);
+      } catch (err) {
+        console.error('Error fetching repositories:', err);
+        setError(err instanceof Error ? err : new Error('Unknown error'));
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    
+    fetchRepositories();
+  }, [githubUsername, language, sortOption, sortDirection]);
 
   // Extract available languages for the filter
   const availableLanguages = useMemo(() => {
@@ -81,7 +113,21 @@ export default function RepositoriesPage() {
   };
 
   // Helper function to format relative time
-  const getRelativeTimeString = (date: Date): string => {
+  const getRelativeTimeString = (dateInput: Date | string | null | undefined): string => {
+    let date: Date | null = null;
+    if (!dateInput) return 'recently';
+    if (dateInput instanceof Date) {
+      date = dateInput;
+    } else if (typeof dateInput === 'string') {
+      const parsed = new Date(dateInput);
+      if (!isNaN(parsed.getTime())) {
+        date = parsed;
+      } else {
+        return 'recently';
+      }
+    } else {
+      return 'recently';
+    }
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffSec = Math.round(diffMs / 1000);
@@ -154,24 +200,24 @@ export default function RepositoriesPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {repositories.map((repo) => (
             <RepositoryCard 
-              key={repo.id}
+              key={repo.id || repo.name}
               name={repo.name}
-              description={repo.description}
+              description={repo.description || ""}
               language={repo.language || "Unknown"}
-              stars={repo.starCount}
-              forks={repo.forkCount}
+              stars={repo.starCount || 0}
+              forks={repo.forkCount || 0}
               lastCommit={getRelativeTimeString(repo.pushedAt || repo.updatedAt)}
-              activity={repo.activity as any}
+              activity={repo.activity || "Active"}
               onSelect={() => window.open(repo.url, '_blank')}
             />
           ))}
         </div>
       )}
       
-      {/* Pagination info */}
-      {repositories.length > 0 && repositoriesData?.metadata?.pagination && (
+      {/* Pagination info - simplified */}
+      {repositories.length > 0 && (
         <div className="mt-6 text-center text-sm text-muted-foreground">
-          Showing {repositories.length} of {repositoriesData.metadata.pagination.totalCount} repositories
+          Showing {repositories.length} repositories
         </div>
       )}
     </DashboardLayout>

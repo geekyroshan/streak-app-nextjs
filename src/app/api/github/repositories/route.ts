@@ -88,6 +88,9 @@ export async function GET() {
               }
               updatedAt
               pushedAt
+              primaryLanguage {
+                name
+              }
             }
             pageInfo {
               hasNextPage
@@ -104,7 +107,7 @@ export async function GET() {
     });
     
     // Format repository data for the frontend
-    const repositories = data.viewer.repositories.nodes.map((repo: GitHubRepository) => ({
+    const repositories = data.viewer.repositories.nodes.map((repo: any) => ({
       name: repo.name,
       fullName: repo.nameWithOwner,
       url: repo.url,
@@ -112,6 +115,7 @@ export async function GET() {
       defaultBranch: repo.defaultBranchRef?.name || 'main',
       updatedAt: repo.updatedAt,
       lastPushedAt: repo.pushedAt,
+      language: repo.primaryLanguage?.name || 'Unknown',
       // Calculate "last updated" text for display
       lastUpdatedText: getTimeAgoText(new Date(repo.pushedAt))
     }));

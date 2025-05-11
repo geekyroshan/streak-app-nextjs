@@ -115,11 +115,12 @@ export async function POST(request: NextRequest) {
     await execAsync(`git add "${body.filePath}"`);
     
     // Make the backdated commit using environment variables
+    // The --allow-empty flag permits commits with no changes
     console.log(`Creating backdated commit for: ${formattedDate}`);
     const commitCommand = `
       GIT_AUTHOR_DATE="${formattedDate}" \
       GIT_COMMITTER_DATE="${formattedDate}" \
-      git commit -m "${body.commitMessage.replace(/"/g, '\\"')}"
+      git commit --allow-empty -m "${body.commitMessage.replace(/"/g, '\\"')} [${new Date().toISOString()}]"
     `;
     
     const { stdout: commitOutput } = await execAsync(commitCommand);

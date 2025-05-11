@@ -11,7 +11,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, useMemo } from 'react';
 import { useGitHubUser, transformUserData } from '@/hooks/github/use-github-user';
 import { useGitHubContributions, transformContributionsData } from '@/hooks/github/use-github-contributions';
-import { useGitHubRepositories, transformRepositoryData } from '@/hooks/github/use-github-repositories';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function DashboardPage() {
@@ -83,16 +82,51 @@ export default function DashboardPage() {
     enabled: !!githubUsername
   });
 
-  // Fetch GitHub repositories data (most recently updated)
-  const {
-    data: repositoriesData,
-    isLoading: isRepositoriesLoading,
-    error: repositoriesError 
-  } = useGitHubRepositories(githubUsername, {
-    sort: 'updated',
-    perPage: 2,
-    enabled: !!githubUsername
-  });
+  // State for repositories
+  const [repositories, setRepositories] = useState<any[]>([]);
+  const [isRepositoriesLoading, setIsRepositoriesLoading] = useState(true);
+  const [repositoriesError, setRepositoriesError] = useState<Error | null>(null);
+
+  // Fetch repositories directly using the API
+  useEffect(() => {
+    if (!githubUsername) {
+      setIsRepositoriesLoading(false);
+      return;
+    }
+    
+    async function fetchRepositories() {
+      try {
+        setIsRepositoriesLoading(true);
+        
+        const params = new URLSearchParams({
+          sort: 'updated',
+          direction: 'desc',
+          per_page: '2'
+        });
+        
+        const response = await fetch(`/api/github/repositories?${params.toString()}`);
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch repositories');
+        }
+        
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        setRepositories(data.repositories || []);
+      } catch (err) {
+        console.error('Error fetching repositories:', err);
+        setRepositoriesError(err instanceof Error ? err : new Error('Unknown error'));
+      } finally {
+        setIsRepositoriesLoading(false);
+      }
+    }
+    
+    fetchRepositories();
+  }, [githubUsername]);
 
   // Process GitHub data
   const processedUserData = useMemo(() => {
@@ -104,11 +138,6 @@ export default function DashboardPage() {
     if (!contributionsData?.data) return null;
     return transformContributionsData(contributionsData.data);
   }, [contributionsData]);
-
-  const processedRepositoriesData = useMemo(() => {
-    if (!repositoriesData?.data) return null;
-    return transformRepositoryData(repositoriesData.data);
-  }, [repositoriesData]);
 
   // Generate activity data for charts
   const activityChartData = useMemo(() => {
@@ -283,17 +312,19 @@ export default function DashboardPage() {
               <Skeleton className="h-[150px] w-full" />
               <Skeleton className="h-[150px] w-full" />
             </>
-          ) : processedRepositoriesData && processedRepositoriesData.length > 0 ? (
-            processedRepositoriesData.map(repo => (
+          ) : repositories && repositories.length > 0 ? (
+            repositories.slice(0, 2).map(repo => (
               <RepositoryCard 
-                key={repo.id}
+                key={repo.id || repo.name}
                 name={repo.name}
-                description={repo.description}
+                description={repo.description || ""}
                 language={repo.language || "Unknown"}
-                stars={repo.starCount}
-                forks={repo.forkCount}
-                lastCommit={getRelativeTimeString(repo.pushedAt || repo.updatedAt)}
-                activity={repo.activity as any}
+                stars={repo.starCount || 0}
+                forks={repo.forkCount || 0}
+                lastCommit={typeof repo.pushedAt === 'string' || typeof repo.updatedAt === 'string' ? 
+                  getRelativeTimeString(new Date(repo.pushedAt || repo.updatedAt)) : 
+                  "recently"}
+                activity={repo.activity || "Active"}
                 onSelect={() => window.open(repo.url, '_blank')}
               />
             ))
@@ -303,28 +334,47 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
+        {/* Fix My Streak Button */}
+        <div className="flex justify-center mt-6">
+          <button
+            className="bg-primary text-primary-foreground px-6 py-2 rounded-lg font-semibold shadow hover:bg-primary/90 transition"
+            onClick={() => router.push('/streak-manager')}
+            type="button"
+          >
+            Fix My Streak
+          </button>
+        </div>
       </div>
     </DashboardLayout>
   );
 }
 
-// Helper function to format relative time
+// Helper function to format relative time with safety checks
 function getRelativeTimeString(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSec = Math.round(diffMs / 1000);
-  const diffMin = Math.round(diffSec / 60);
-  const diffHour = Math.round(diffMin / 60);
-  const diffDay = Math.round(diffHour / 24);
-  const diffWeek = Math.round(diffDay / 7);
-  const diffMonth = Math.round(diffDay / 30);
-  const diffYear = Math.round(diffDay / 365);
+  try {
+    if (!date || typeof date.getTime !== 'function') {
+      return 'recently';
+    }
+    
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffSec = Math.round(diffMs / 1000);
+    const diffMin = Math.round(diffSec / 60);
+    const diffHour = Math.round(diffMin / 60);
+    const diffDay = Math.round(diffHour / 24);
+    const diffWeek = Math.round(diffDay / 7);
+    const diffMonth = Math.round(diffDay / 30);
+    const diffYear = Math.round(diffDay / 365);
 
-  if (diffSec < 60) return 'just now';
-  if (diffMin < 60) return `${diffMin} minutes ago`;
-  if (diffHour < 24) return `${diffHour} hours ago`;
-  if (diffDay < 7) return `${diffDay} days ago`;
-  if (diffWeek < 4) return `${diffWeek} weeks ago`;
-  if (diffMonth < 12) return `${diffMonth} months ago`;
-  return `${diffYear} years ago`;
+    if (diffSec < 60) return 'just now';
+    if (diffMin < 60) return `${diffMin} minutes ago`;
+    if (diffHour < 24) return `${diffHour} hours ago`;
+    if (diffDay < 7) return `${diffDay} days ago`;
+    if (diffWeek < 4) return `${diffWeek} weeks ago`;
+    if (diffMonth < 12) return `${diffMonth} months ago`;
+    return `${diffYear} years ago`;
+  } catch (error) {
+    console.error('Error formatting date:', error);
+    return 'recently';
+  }
 } 

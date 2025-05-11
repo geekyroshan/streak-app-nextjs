@@ -10,6 +10,7 @@ import { Calendar, Clock, GitBranch, MessageSquarePlus, CalendarDays, FileEdit, 
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { cn } from '@/lib/utils';
 
 // GitHub repository type
 interface Repository {
@@ -28,6 +29,38 @@ interface RepoFile {
   isDirectory: boolean;
   url: string;
 }
+
+// Add toasts component to show notifications
+const ToastContainer = () => {
+  const { toasts, dismissToast } = useToast();
+  
+  return (
+    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-md">
+      {toasts.map((toast) => (
+        <div 
+          key={toast.id} 
+          className={cn(
+            "p-4 rounded-md shadow-md text-sm flex justify-between items-start",
+            {
+              "bg-green-500 text-white": toast.type === "success",
+              "bg-red-500 text-white": toast.type === "error",
+              "bg-blue-500 text-white": toast.type === "info",
+              "bg-yellow-500 text-white": toast.type === "warning"
+            }
+          )}
+        >
+          <span>{toast.message}</span>
+          <button 
+            onClick={() => dismissToast(toast.id)}
+            className="ml-2 text-white/80 hover:text-white"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 export default function StreakManagerPage() {
   const [activeTab, setActiveTab] = useState("fix-missed-days");
@@ -48,6 +81,14 @@ export default function StreakManagerPage() {
   const [currentPath, setCurrentPath] = useState<string>("");
   const { showToast } = useToast();
   const { user, isLoading: authLoading } = useAuth();
+  const [recentCommits, setRecentCommits] = useState<Array<{
+    id: string;
+    repoName: string;
+    date: string;
+    time: string;
+    commitMessage: string;
+    commitUrl?: string;
+  }>>([]);
 
   // Fetch repositories when component mounts
   useEffect(() => {
@@ -227,12 +268,42 @@ export default function StreakManagerPage() {
         );
       }
       
+      // Add to recent commits
+      setRecentCommits(prev => {
+        // Create new commit object
+        const newCommit = {
+          id: Date.now().toString(),
+          repoName: selectedRepository,
+          date: commitDate,
+          time: commitTime,
+          commitMessage: commitMessage,
+          commitUrl: data.commitUrl
+        };
+        
+        // Add to front of array, limit to 5 items
+        const updatedCommits = [newCommit, ...prev].slice(0, 5);
+        return updatedCommits;
+      });
+      
       console.log('Backdated commit created:', data);
       
     } catch (error) {
       console.error('Error creating backdated commit:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to create backdated commit';
-      showToast(errorMessage, 'error');
+      
+      // Try to get more detailed error information
+      let errorMessage = '';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        
+        // Check if the error message contains "nothing to commit"
+        if (errorMessage.includes('nothing to commit')) {
+          errorMessage = 'No changes detected. Try modifying the file content or using a different file.';
+        }
+      } else {
+        errorMessage = 'Failed to create backdated commit. Please try again.';
+      }
+      
+      showToast(errorMessage, 'error', 10000);
     } finally {
       setLoading(prev => ({ ...prev, content: false }));
     }
@@ -299,10 +370,10 @@ export default function StreakManagerPage() {
     return (
       <div>
         <h4 className="text-sm font-medium mb-2">File Content</h4>
-        <div className="bg-muted/30 border border-border rounded-md p-3 min-h-[100px] text-sm">
+        <div className="bg-muted/30 border border-border rounded-md p-3 min-h-[500px] text-sm">
           {fileContent ? (
             <textarea 
-              className="w-full min-h-[100px] bg-transparent focus:outline-none"
+              className="w-full min-h-[500px] h-[70vh] bg-transparent focus:outline-none resize-y"
               value={fileContent}
               onChange={(e) => setFileContent(e.target.value)}
             />
@@ -377,6 +448,7 @@ export default function StreakManagerPage() {
 
   return (
     <DashboardLayout>
+      <ToastContainer />
       <h1 className="text-3xl font-bold mb-2">Streak Manager</h1>
       <p className="text-muted-foreground mb-6">Fix gaps in your contribution timeline</p>
       
@@ -559,6 +631,49 @@ export default function StreakManagerPage() {
                     ) : "Create Backdated Commit"}
                   </Button>
                 </div>
+              </CardContent>
+            </Card>
+            
+            {/* Add Recent Backdate Commits card here */}
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle>Recent Backdate Commits</CardTitle>
+                <CardDescription>View your most recent backdated commits</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {recentCommits.length === 0 ? (
+                  <div className="text-center py-6 text-muted-foreground">
+                    No recent backdated commits found
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {recentCommits.map((commit) => (
+                      <div key={commit.id} className="border border-border rounded-md p-3 bg-muted/20">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <div className="font-medium text-sm">{commit.repoName}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {new Date(`${commit.date}T${commit.time}`).toLocaleString()}
+                            </div>
+                          </div>
+                          {commit.commitUrl && (
+                            <a 
+                              href={commit.commitUrl} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-xs text-primary hover:text-primary/80"
+                            >
+                              View on GitHub
+                            </a>
+                          )}
+                        </div>
+                        <div className="mt-2">
+                          <div className="text-sm mt-1 break-words">{commit.commitMessage}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
