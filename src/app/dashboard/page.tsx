@@ -7,16 +7,43 @@ import { StatsCard } from '@/components/stats/StatsCard';
 import { RepositoryCard } from '@/components/repository/RepositoryCard';
 import { Calendar, GitBranch, BarChart2, Clock } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
+import { useEffect, useState, useMemo, Suspense } from 'react';
 import { useGitHubUser, transformUserData } from '@/hooks/github/use-github-user';
 import { useGitHubContributions, transformContributionsData } from '@/hooks/github/use-github-contributions';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
+
+// Client component wrapper for search params
+import { useSearchParams } from 'next/navigation';
+
+function SearchParamsHandler() {
+  const searchParams = useSearchParams();
+  
+  useEffect(() => {
+    const fresh = searchParams.get('fresh');
+    if (fresh === 'true') {
+      console.log('Dashboard: Fresh login detected, cleaning URL');
+      
+      // Clean up URL without causing page reloads
+      const url = new URL(window.location.href);
+      url.searchParams.delete('fresh');
+      
+      // Remove timestamp parameter
+      if (url.searchParams.has('_')) {
+        url.searchParams.delete('_');
+      }
+      
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, [searchParams]);
+  
+  return null;
+}
 
 export default function DashboardPage() {
   const { user, isLoading, session } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [authChecked, setAuthChecked] = useState(false);
   
   // GitHub username from Supabase auth
@@ -44,25 +71,6 @@ export default function DashboardPage() {
       setAuthChecked(true);
     }
   }, [user, isLoading, session]);
-  
-  // Handle fresh login state with a simplified approach
-  useEffect(() => {
-    const fresh = searchParams.get('fresh');
-    if (fresh === 'true') {
-      console.log('Dashboard: Fresh login detected, cleaning URL');
-      
-      // Clean up URL without causing page reloads
-      const url = new URL(window.location.href);
-      url.searchParams.delete('fresh');
-      
-      // Remove timestamp parameter
-      if (url.searchParams.has('_')) {
-        url.searchParams.delete('_');
-      }
-      
-      window.history.replaceState({}, '', url.toString());
-    }
-  }, [searchParams]);
 
   // Fetch GitHub user data
   const {
@@ -197,6 +205,11 @@ export default function DashboardPage() {
   // This ensures we don't get stuck in an infinite loading screen
   return (
     <DashboardLayout>
+      {/* Wrap searchParams usage in Suspense */}
+      <Suspense fallback={null}>
+        <SearchParamsHandler />
+      </Suspense>
+      
       <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
       
       {/* Welcome Message */}
@@ -313,36 +326,34 @@ export default function DashboardPage() {
               <Skeleton className="h-[150px] w-full" />
             </>
           ) : repositories && repositories.length > 0 ? (
-            repositories.slice(0, 2).map(repo => (
+            repositories.slice(0, 2).map((repo: any) => (
               <RepositoryCard 
                 key={repo.id || repo.name}
                 name={repo.name}
                 description={repo.description || ""}
-                language={repo.language || "Unknown"}
+                language={repo.language}
                 stars={repo.starCount || 0}
                 forks={repo.forkCount || 0}
-                lastCommit={typeof repo.pushedAt === 'string' || typeof repo.updatedAt === 'string' ? 
-                  getRelativeTimeString(new Date(repo.pushedAt || repo.updatedAt)) : 
-                  "recently"}
+                lastCommit={getRelativeTimeString(new Date(repo.pushedAt || repo.updatedAt))}
                 activity={repo.activity || "Active"}
                 onSelect={() => window.open(repo.url, '_blank')}
               />
             ))
           ) : (
-            <div className="col-span-2 text-center p-4 bg-card rounded-lg border border-border">
-              <p className="text-muted-foreground">No repository data available.</p>
+            <div className="col-span-2 text-center p-4 bg-gray-800 bg-opacity-50 rounded-lg">
+              No repositories found. Check your GitHub connection.
             </div>
           )}
         </div>
-        {/* Fix My Streak Button */}
-        <div className="flex justify-center mt-6">
-          <button
-            className="bg-primary text-primary-foreground px-6 py-2 rounded-lg font-semibold shadow hover:bg-primary/90 transition"
+        
+        {/* Add the Fix My Streak button */}
+        <div className="mt-4 text-center">
+          <Button 
             onClick={() => router.push('/streak-manager')}
-            type="button"
+            className="bg-[#66D9C2] hover:bg-[#55c8b1] text-gray-900 font-medium"
           >
             Fix My Streak
-          </button>
+          </Button>
         </div>
       </div>
     </DashboardLayout>
@@ -351,30 +362,39 @@ export default function DashboardPage() {
 
 // Helper function to format relative time with safety checks
 function getRelativeTimeString(date: Date): string {
-  try {
-    if (!date || typeof date.getTime !== 'function') {
-      return 'recently';
-    }
-    
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffSec = Math.round(diffMs / 1000);
-    const diffMin = Math.round(diffSec / 60);
-    const diffHour = Math.round(diffMin / 60);
-    const diffDay = Math.round(diffHour / 24);
-    const diffWeek = Math.round(diffDay / 7);
-    const diffMonth = Math.round(diffDay / 30);
-    const diffYear = Math.round(diffDay / 365);
-
-    if (diffSec < 60) return 'just now';
-    if (diffMin < 60) return `${diffMin} minutes ago`;
-    if (diffHour < 24) return `${diffHour} hours ago`;
-    if (diffDay < 7) return `${diffDay} days ago`;
-    if (diffWeek < 4) return `${diffWeek} weeks ago`;
-    if (diffMonth < 12) return `${diffMonth} months ago`;
-    return `${diffYear} years ago`;
-  } catch (error) {
-    console.error('Error formatting date:', error);
-    return 'recently';
+  const now = new Date();
+  const differenceInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+  
+  // Less than a minute
+  if (differenceInSeconds < 60) {
+    return "just now";
   }
+  
+  // Less than an hour
+  if (differenceInSeconds < 3600) {
+    const minutes = Math.floor(differenceInSeconds / 60);
+    return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+  }
+  
+  // Less than a day
+  if (differenceInSeconds < 86400) {
+    const hours = Math.floor(differenceInSeconds / 3600);
+    return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  }
+  
+  // Less than a week
+  if (differenceInSeconds < 604800) {
+    const days = Math.floor(differenceInSeconds / 86400);
+    return `${days} day${days > 1 ? 's' : ''} ago`;
+  }
+  
+  // Less than a month
+  if (differenceInSeconds < 2592000) {
+    const weeks = Math.floor(differenceInSeconds / 604800);
+    return `${weeks} week${weeks > 1 ? 's' : ''} ago`;
+  }
+  
+  // More than a month
+  const months = Math.floor(differenceInSeconds / 2592000);
+  return `${months} month${months > 1 ? 's' : ''} ago`;
 } 

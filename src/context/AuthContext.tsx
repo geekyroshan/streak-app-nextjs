@@ -1,10 +1,26 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import React, { createContext, useContext, useEffect, useState, Suspense } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 import { clearAuthCookies, clearLocalSession } from '@/middleware/auth';
+
+// Move useSearchParams to a separate component
+import { useSearchParams } from 'next/navigation';
+
+function SearchParamsHandler({ setAuthInitialized }: { setAuthInitialized: React.Dispatch<React.SetStateAction<boolean>> }) {
+  const searchParams = useSearchParams();
+  
+  useEffect(() => {
+    const fresh = searchParams?.get('fresh');
+    if (fresh === 'true') {
+      console.log('Auth context: Fresh login detected, waiting for auth initialization');
+    }
+  }, [searchParams]);
+  
+  return null;
+}
 
 type AuthContextType = {
   user: User | null;
@@ -24,15 +40,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [authInitialized, setAuthInitialized] = useState<boolean>(false);
   const router = useRouter();
-  const searchParams = useSearchParams();
 
   // Handle fresh parameter for forced reload after auth
-  useEffect(() => {
-    const fresh = searchParams?.get('fresh');
-    if (fresh === 'true' && !authInitialized) {
-      console.log('Auth context: Fresh login detected, waiting for auth initialization');
-    }
-  }, [searchParams, authInitialized]);
+  // Now handled in SearchParamsHandler
 
   // This effect handles both the initial session setup and auth state changes
   useEffect(() => {
@@ -198,16 +208,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
           scopes: 'read:user user:email repo',
-          skipBrowserRedirect: false
-        }
+        },
       });
-      
+
       if (error) {
-        throw error;
+        console.error('GitHub sign-in error:', error);
+        setError(error.message);
+      } else {
+        console.log('Sign-in initiated, redirecting to GitHub...');
       }
     } catch (err) {
-      console.error('Error signing in with GitHub:', err);
+      console.error('Error during GitHub sign-in:', err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
+    } finally {
       setIsLoading(false);
     }
   };
@@ -216,37 +229,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     setError(null);
     try {
-      console.log('Signing out...');
-      
-      // Clear local state first
-      setUser(null);
-      setSession(null);
-      
-      // Clear cookies and local storage
-      clearAuthCookies();
-      clearLocalSession();
-      
-      // Sign out from Supabase
-      const { error } = await supabase.auth.signOut({
-        scope: 'global'
-      });
-      
+      const { error } = await supabase.auth.signOut();
       if (error) {
-        throw error;
+        console.error('Sign out error:', error);
+        setError(error.message);
+      } else {
+        // Clear session data
+        setUser(null);
+        setSession(null);
+        
+        // Clear cookies and local session data
+        await clearAuthCookies();
+        clearLocalSession();
+        
+        // Redirect to landing page
+        router.push('/?logout=success');
       }
-      
-      console.log('Sign out successful, redirecting');
-      
-      // Use a more direct and reliable approach to redirect
-      // Force a hard reload to the root URL to ensure clean state
-      window.location.replace('/');
     } catch (err) {
-      console.error('Error signing out:', err);
+      console.error('Error during sign out:', err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
+    } finally {
       setIsLoading(false);
-      
-      // Even on error, attempt to redirect to ensure the user isn't stuck
-      window.location.replace('/');
     }
   };
 
@@ -256,10 +259,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isLoading,
     error,
     signInWithGitHub,
-    signOut
+    signOut,
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {/* Wrap search params in Suspense */}
+      <Suspense fallback={null}>
+        <SearchParamsHandler setAuthInitialized={setAuthInitialized} />
+      </Suspense>
+      
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

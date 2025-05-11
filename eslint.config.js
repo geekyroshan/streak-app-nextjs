@@ -1,10 +1,12 @@
-import js from "@eslint/js";
-import globals from "globals";
-import reactHooks from "eslint-plugin-react-hooks";
-import reactRefresh from "eslint-plugin-react-refresh";
-import tseslint from "typescript-eslint";
+const globals = require("globals");
+const tseslint = require("typescript-eslint");
+const reactHooks = require("eslint-plugin-react-hooks") || { configs: { recommended: { rules: {} } } };
+const reactRefresh = require("eslint-plugin-react-refresh") || {};
 
-export default tseslint.config(
+// Fallback for compatibility
+const js = require("@eslint/js") || { configs: { recommended: {} } };
+
+module.exports = tseslint.config(
   { ignores: ["dist"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],

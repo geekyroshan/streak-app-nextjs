@@ -5,22 +5,88 @@ import Link from 'next/link';
 import { Button } from "@/components/ui/button";
 import { GitHubSignInButton } from '@/components/auth/GitHubSignInButton';
 import { useAuth } from '@/context/AuthContext';
-import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useState, Suspense, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
+
+// Move useSearchParams to a separate component
+import { useSearchParams } from 'next/navigation';
+
+function SearchParamsHandler({ setUrlParams }: { 
+  setUrlParams: (params: { error?: string, logout?: string, redirect?: string }) => void 
+}) {
+  const searchParams = useSearchParams();
+  
+  useEffect(() => {
+    // Extract parameters
+    const error = searchParams.get('error');
+    const logout = searchParams.get('logout');
+    const redirect = searchParams.get('redirect');
+    
+    // Pass to parent component
+    setUrlParams({
+      error: error || undefined,
+      logout: logout || undefined,
+      redirect: redirect || undefined
+    });
+  }, [searchParams, setUrlParams]);
+  
+  return null;
+}
 
 export function LandingPage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { showToast } = useToast();
   const [showLogoutMessage, setShowLogoutMessage] = useState(false);
+  const [urlParams, setUrlParams] = useState<{
+    error?: string;
+    logout?: string;
+    redirect?: string;
+  }>({});
+  const [localLoading, setLocalLoading] = useState(true);
+  const loadingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const loadAttemptsRef = useRef(0);
+  
+  // Setup safety timeout to prevent infinite loading
+  useEffect(() => {
+    loadingTimerRef.current = setTimeout(() => {
+      setLocalLoading(false);
+      console.log('Landing page loading timeout reached, forcing render');
+    }, 5000); // 5 second maximum loading time
+    
+    return () => {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+      }
+    };
+  }, []);
+  
+  // Handle auth loading state with retry limit
+  useEffect(() => {
+    if (!isLoading) {
+      // Auth loading completed
+      setLocalLoading(false);
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+      }
+    } else {
+      // Still loading, implement retry limit
+      loadAttemptsRef.current += 1;
+      
+      if (loadAttemptsRef.current > 10) {
+        console.log('Max loading attempts reached, forcing render');
+        setLocalLoading(false);
+        if (loadingTimerRef.current) {
+          clearTimeout(loadingTimerRef.current);
+        }
+      }
+    }
+  }, [isLoading]);
   
   useEffect(() => {
-    // Handle various URL parameters
-    const error = searchParams.get('error');
-    const logout = searchParams.get('logout');
-    const redirect = searchParams.get('redirect');
+    // Handle various URL parameters from state
+    const { error, logout, redirect } = urlParams;
     
     // Show error message if there's an error
     if (error) {
@@ -34,7 +100,7 @@ export function LandingPage() {
     }
     
     // If user is already logged in, redirect to dashboard or the requested page
-    if (user && !isLoading) {
+    if (user && !localLoading) {
       console.log('User already logged in, redirecting...');
       if (redirect && redirect.startsWith('/') && !redirect.includes('//')) {
         router.push(redirect);
@@ -42,9 +108,10 @@ export function LandingPage() {
         router.push('/dashboard');
       }
     }
-  }, [user, isLoading, router, searchParams, showToast]);
+  }, [user, localLoading, router, urlParams, showToast]);
 
-  if (isLoading) {
+  // Show loading state, but only for a reasonable amount of time
+  if (localLoading && loadAttemptsRef.current < 10) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#1A1F2C]">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#66D9C2]"></div>
@@ -54,6 +121,11 @@ export function LandingPage() {
 
   return (
     <div className="min-h-screen bg-[#1A1F2C] text-white flex flex-col">
+      {/* Wrap search params in Suspense */}
+      <Suspense fallback={null}>
+        <SearchParamsHandler setUrlParams={setUrlParams} />
+      </Suspense>
+      
       <main className="flex-1">
         <div className="container max-w-5xl mx-auto px-4 py-16 md:py-24 flex flex-col items-center">
           <h1 className="text-4xl md:text-6xl font-bold text-center bg-gradient-to-r from-[#66D9C2] to-[#9b87f5] bg-clip-text text-transparent mb-4">
