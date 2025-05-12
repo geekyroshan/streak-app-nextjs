@@ -1,12 +1,10 @@
 import { createServerSupabaseClient } from '@/lib/server-supabase';
 import { NextRequest, NextResponse } from 'next/server';
-import { exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import git from 'isomorphic-git';
+import http from 'isomorphic-git/http/node';
 
 // Define body type for the request
 interface CreateCommitBody {
@@ -19,43 +17,13 @@ interface CreateCommitBody {
 }
 
 /**
- * Verify that git is available in the environment
- */
-async function checkGitAvailability() {
-  try {
-    // Check if git is in PATH
-    const { stdout } = await execAsync('which git || echo "not found"');
-    if (stdout.trim() === 'not found') {
-      throw new Error('Git command not found in PATH');
-    }
-    
-    // Verify git version
-    const { stdout: versionOutput } = await execAsync('git --version');
-    console.log('Git version:', versionOutput.trim());
-    return true;
-  } catch (error) {
-    console.error('Git availability check failed:', error);
-    return false;
-  }
-}
-
-/**
  * POST handler for /api/github/create-commit
- * Creates a properly backdated commit on GitHub by using Git CLI
+ * Creates a properly backdated commit on GitHub using isomorphic-git
  */
 export async function POST(request: NextRequest) {
   let tempDir = '';
   
   try {
-    // Ensure git is available
-    const gitAvailable = await checkGitAvailability();
-    if (!gitAvailable) {
-      return NextResponse.json(
-        { error: 'Git is not available in the environment. Please contact support.' },
-        { status: 500 }
-      );
-    }
-    
     // Parse request body
     const body: CreateCommitBody = await request.json();
     
@@ -114,11 +82,7 @@ export async function POST(request: NextRequest) {
       ? body.repoName.split('/')
       : [userData.github_username, body.repoName];
       
-    const repoUrl = `https://${userData.github_access_token}@github.com/${owner}/${repo}.git`;
-    
-    // Create file directory structure if needed
-    const fileDir = path.dirname(path.join(tempDir, body.filePath));
-    await fs.promises.mkdir(fileDir, { recursive: true });
+    const repoUrl = `https://github.com/${owner}/${repo}.git`;
     
     // Format the backdated timestamp
     const [year, month, day] = body.date.split('-').map(Number);
@@ -126,69 +90,102 @@ export async function POST(request: NextRequest) {
     const backdatedDate = new Date(year, month - 1, day, hour, minute);
     const formattedDate = backdatedDate.toISOString();
     
-    // Define git path explicitly
-    const gitPath = process.env.GIT_EXECUTABLE_PATH || 'git';
-    
-    // Clone the repository (shallow clone to save time/bandwidth)
-    console.log(`Cloning repository: ${owner}/${repo}`);
     try {
-      const cloneResult = await execAsync(`${gitPath} clone --depth 1 ${repoUrl} ${tempDir}`);
-      console.log('Clone output:', cloneResult.stdout);
-    } catch (error: any) {
-      console.error('Clone error:', error);
-      throw new Error(`Failed to clone repository: ${error.message || 'Unknown error'}`);
-    }
-    
-    // Change to the repo directory
-    const originalDir = process.cwd();
-    process.chdir(tempDir);
-    
-    try {
+      // Clone the repository
+      console.log(`Cloning repository: ${owner}/${repo}`);
+      await git.clone({
+        fs,
+        http,
+        dir: tempDir,
+        url: repoUrl,
+        depth: 1,
+        singleBranch: true,
+        onAuth: () => ({
+          username: userData.github_username || 'github-user',
+          password: userData.github_access_token
+        })
+      });
+      
+      console.log('Clone completed successfully');
+      
+      // Create file directory structure if needed
+      const fileFullPath = path.join(tempDir, body.filePath);
+      const fileDir = path.dirname(fileFullPath);
+      await fs.promises.mkdir(fileDir, { recursive: true });
+      
       // Create or update the file with new content
       console.log(`Writing file: ${body.filePath}`);
-      await fs.promises.writeFile(path.join(tempDir, body.filePath), body.fileContent);
-      
-      // Configure git user
-      await execAsync(`${gitPath} config user.name "${userData.github_username || 'GitHub User'}"`);
-      await execAsync(`${gitPath} config user.email "${session.user.email || 'user@example.com'}"`);
+      await fs.promises.writeFile(fileFullPath, body.fileContent);
       
       // Add the file to git
-      await execAsync(`${gitPath} add "${body.filePath}"`);
+      console.log(`Adding file: ${body.filePath}`);
+      await git.add({
+        fs,
+        dir: tempDir,
+        filepath: body.filePath
+      });
       
-      // Make the backdated commit using environment variables
-      // The --allow-empty flag permits commits with no changes
+      // Get current status to verify file was added
+      const status = await git.status({
+        fs,
+        dir: tempDir,
+        filepath: body.filePath
+      });
+      console.log(`File status: ${status}`);
+      
+      // Make the backdated commit
       console.log(`Creating backdated commit for: ${formattedDate}`);
-      const commitCommand = `
-        GIT_AUTHOR_DATE="${formattedDate}" \
-        GIT_COMMITTER_DATE="${formattedDate}" \
-        ${gitPath} commit --allow-empty -m "${body.commitMessage.replace(/"/g, '\\"')} [${new Date().toISOString()}]"
-      `;
+      const commitResult = await git.commit({
+        fs,
+        dir: tempDir,
+        message: `${body.commitMessage} [${new Date().toISOString()}]`,
+        author: {
+          name: userData.github_username || 'GitHub User',
+          email: session.user.email || 'user@example.com',
+          timestamp: Math.floor(backdatedDate.getTime() / 1000),
+          timezoneOffset: backdatedDate.getTimezoneOffset()
+        },
+        committer: {
+          name: userData.github_username || 'GitHub User',
+          email: session.user.email || 'user@example.com',
+          timestamp: Math.floor(backdatedDate.getTime() / 1000),
+          timezoneOffset: backdatedDate.getTimezoneOffset()
+        }
+      });
       
-      const { stdout: commitOutput } = await execAsync(commitCommand);
-      console.log('Commit output:', commitOutput);
-      
-      // Extract commit hash from the output
-      const commitHash = commitOutput.match(/\[(main|master)?\s*([0-9a-f]+)\]/)?.[2] || '';
+      console.log('Commit successful, SHA:', commitResult);
       
       // Push the changes to GitHub
       console.log('Pushing changes to GitHub');
-      await execAsync(`${gitPath} push origin HEAD:main`);
+      await git.push({
+        fs,
+        http,
+        dir: tempDir,
+        remote: 'origin',
+        ref: 'main', // or 'master' depending on your repository
+        onAuth: () => ({
+          username: userData.github_username || 'github-user',
+          password: userData.github_access_token
+        })
+      });
+      
+      console.log('Push completed successfully');
       
       // Construct commit URL
-      const commitUrl = `https://github.com/${owner}/${repo}/commit/${commitHash}`;
+      const commitUrl = `https://github.com/${owner}/${repo}/commit/${commitResult}`;
       
       // Return successful response
       return NextResponse.json({
         success: true,
         commitUrl,
-        commitHash,
+        commitHash: commitResult,
         timestamp: formattedDate,
         message: 'Successfully created backdated commit'
       });
+    } catch (gitError: any) {
+      console.error('Git operation error:', gitError);
+      throw new Error(`Git operation failed: ${gitError.message || 'Unknown error'}`);
     } finally {
-      // Always make sure to change back to the original directory
-      process.chdir(originalDir);
-      
       // Clean up the temporary directory
       try {
         await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -203,14 +200,6 @@ export async function POST(request: NextRequest) {
     // Clean up temporary directory if it exists
     if (tempDir) {
       try {
-        const originalDir = process.cwd();
-        // Only change directory if we're currently in the temp dir
-        if (process.cwd().includes(tempDir)) {
-          process.chdir(os.tmpdir());
-        } else {
-          process.chdir(originalDir);
-        }
-        
         await fs.promises.rm(tempDir, { recursive: true, force: true });
         console.log(`Temporary directory cleaned up after error: ${tempDir}`);
       } catch (cleanupError) {

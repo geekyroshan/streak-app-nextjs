@@ -16,12 +16,5 @@
     }
   ],
   "installCommand": "npm install",
-  "buildCommand": "npm run build",
-  "functions": {
-    "src/app/api/github/create-commit/route.ts": {
-      "runtime": "nodejs@21.5.0",
-      "memory": 1024
-    }
-  },
-  "regions": ["iad1"]
+  "buildCommand": "npm run build"
 } 

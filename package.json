@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "bash ./scripts/install-git.sh || true",
+    "prebuild": "echo 'Skipping prebuild script'",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
@@ -12,6 +12,7 @@
   "dependencies": {
     "@apollo/client": "^3.13.8",
     "@hookform/resolvers": "^5.0.1",
+    "@isomorphic-git/lightning-fs": "^4.6.0",
     "@octokit/rest": "^21.1.1",
     "@radix-ui/react-avatar": "^1.1.7",
     "@radix-ui/react-dialog": "^1.1.11",
