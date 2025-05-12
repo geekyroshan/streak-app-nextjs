@@ -41,9 +41,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authInitialized, setAuthInitialized] = useState<boolean>(false);
   const router = useRouter();
 
-  // Handle fresh parameter for forced reload after auth
-  // Now handled in SearchParamsHandler
-
   // This effect handles both the initial session setup and auth state changes
   useEffect(() => {
     console.log('Setting up auth context...');
@@ -76,6 +73,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log('User ID:', newSession.user.id);
           console.log('User metadata:', JSON.stringify(newSession.user.user_metadata, null, 2));
           
+          // First check if user already exists to avoid overwriting github_username
+          const { data: existingUser, error: lookupError } = await supabase
+            .from('users')
+            .select('id, auth_id, github_username, github_access_token')
+            .eq('auth_id', newSession.user.id)
+            .single();
+          
+          // Extract GitHub username from metadata
+          const githubUsername = newSession.user.user_metadata?.user_name || null;
+          console.log('GitHub username from metadata:', githubUsername);
+          
+          // Extract GitHub access token
+          const githubAccessToken = newSession.provider_token || null;
+          console.log('GitHub access token available:', !!githubAccessToken);
+          
           // Create user object with all required fields including github_username
           const userData = {
             id: newSession.user.id,
@@ -87,8 +99,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         newSession.user.user_metadata?.user_name || 
                         newSession.user.user_metadata?.name || 
                         'GitHub User',
-            github_username: newSession.user.user_metadata?.user_name || null
+            github_username: githubUsername,
+            github_access_token: githubAccessToken
           };
+          
+          // Preserve existing github_username if needed
+          if (!userData.github_username && existingUser?.github_username) {
+            console.log('Preserving existing github_username:', existingUser.github_username);
+            userData.github_username = existingUser.github_username;
+          }
+          
+          // Preserve existing token if needed
+          if (!userData.github_access_token && existingUser?.github_access_token) {
+            console.log('Preserving existing github_access_token');
+            userData.github_access_token = existingUser.github_access_token;
+          }
           
           // Upsert user data
           const { error } = await supabase.from('users').upsert(
@@ -284,8 +309,3 @@ export function useAuth() {
   }
   return context;
 }
-
-export function useUser() {
-  const { user } = useAuth();
-  return user;
-} 

@@ -43,7 +43,8 @@ export async function GET(request: NextRequest) {
         try {
           // Log user metadata to debug github_username
           console.log('User metadata from callback:', data.session.user.user_metadata);
-          const githubUsername = data.session.user.user_metadata?.user_name || null;
+          const githubUsername = data.session.user.user_metadata?.user_name || 
+                                data.session.user.user_metadata?.preferred_username || null;
           console.log('GitHub username from metadata:', githubUsername);
           
           // Extract GitHub access token from provider token

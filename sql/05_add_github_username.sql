@@ -2,7 +2,7 @@
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS github_username TEXT;
 
 -- Update existing user records with github_username from auth metadata if available
--- This helps backfill existing records
+-- This helps backfill existing records with proper table qualification to avoid ambiguity
 UPDATE public.users 
 SET github_username = auth.users.raw_user_meta_data->>'user_name'
 FROM auth.users 
@@ -25,4 +25,4 @@ CREATE POLICY users_insert_own ON public.users
   FOR INSERT WITH CHECK (auth.uid()::text = auth_id);
 
 -- Grant access to the column
-GRANT SELECT, UPDATE (github_username) ON public.users TO authenticated; 
+GRANT SELECT, UPDATE (github_username) ON public.users TO authenticated;

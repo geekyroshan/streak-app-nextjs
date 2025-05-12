@@ -74,10 +74,10 @@ export default function SettingsPage() {
   }, []);
 
   // Define fetchUserData as a memoized callback to avoid recreating it on each render
-  // Remove showToast from dependencies as it causes unnecessary re-renders
   const fetchUserData = useCallback(async () => {
     if (!user || dataFetched) return;
     
+    console.log("SettingsPage: Starting fetchUserData");
     setIsLoading(true);
     try {
       console.log("SettingsPage: Attempting to fetch data from 'users' table...");
@@ -107,7 +107,7 @@ export default function SettingsPage() {
           console.log("SettingsPage: Listing all users records for debugging...");
           const { data: allData } = await supabase
             .from('users')
-            .select('id, auth_id, email')
+            .select('id, auth_id, email, github_username')
             .limit(5);
           
           console.log("SettingsPage: First 5 user records:", allData);
@@ -125,6 +125,7 @@ export default function SettingsPage() {
       
       if (userRecord) {
         console.log("SettingsPage: User data retrieved:", userRecord);
+        console.log("SettingsPage: GitHub username from DB:", userRecord.github_username);
         
         // Check if the github_username field exists
         if (!('github_username' in userRecord)) {
@@ -141,9 +142,11 @@ export default function SettingsPage() {
             : user?.user_metadata?.user_name || null
         });
         
+        console.log("SettingsPage: userData set with github_username:", userRecord.github_username || user?.user_metadata?.user_name || null);
+        
         // Only show toast on initial data load, not on re-renders
         if (!dataFetched) {
-          showToast("User profile loaded from database", "success");
+          showToast("User profile loaded", "success");
         }
       } else {
         console.log("SettingsPage: No data found in DB, falling back to auth metadata.");
@@ -161,6 +164,8 @@ export default function SettingsPage() {
             last_login: new Date().toISOString(),
             github_username: user?.user_metadata?.user_name || null
           };
+          
+          console.log("SettingsPage: Creating user with github_username:", newUserData.github_username);
           
           try {
             const { error: insertError } = await supabase
@@ -184,10 +189,6 @@ export default function SettingsPage() {
               if (!dataFetched) {
                 showToast("User profile created", "success");
               }
-              
-              setDataFetched(true);
-              setIsLoading(false);
-              return;
             }
           } catch (createError) {
             console.error("SettingsPage: Error creating user record:", createError);
@@ -195,16 +196,21 @@ export default function SettingsPage() {
         }
         
         // Fallback to metadata even if record creation failed
-        setUserData({
-          email: user.email || '',
-          display_name: user?.user_metadata?.full_name || user?.user_metadata?.name || 'GitHub User',
-          avatar_url: user?.user_metadata?.avatar_url || null,
-          github_username: user?.user_metadata?.user_name || null
-        });
-        
-        // Only show toast on initial data load, not on re-renders
-        if (!dataFetched) {
-          showToast("Using profile data from GitHub login", "info");
+        if (!userData) {
+          console.log("SettingsPage: Using auth metadata as fallback");
+          setUserData({
+            email: user.email || '',
+            display_name: user?.user_metadata?.full_name || user?.user_metadata?.name || 'GitHub User',
+            avatar_url: user?.user_metadata?.avatar_url || null,
+            github_username: user?.user_metadata?.user_name || null
+          });
+          
+          console.log("SettingsPage: userData set with github_username from metadata:", user?.user_metadata?.user_name || null);
+          
+          // Only show toast on initial data load, not on re-renders
+          if (!dataFetched) {
+            showToast("Using profile data from GitHub login", "info");
+          }
         }
       }
     } catch (fetchError) {
@@ -216,7 +222,7 @@ export default function SettingsPage() {
       }
       
       // Ensure fallback even on unexpected errors
-      if (user && user.email) { 
+      if (user && user.email && !userData) { 
         console.log("SettingsPage: Falling back to auth metadata due to fetch error.");
         setUserData({
           email: user.email || '',
@@ -224,19 +230,23 @@ export default function SettingsPage() {
           avatar_url: user.user_metadata?.avatar_url || null,
           github_username: user.user_metadata?.user_name || null
         });
+        console.log("SettingsPage: userData set with github_username from metadata fallback:", user?.user_metadata?.user_name || null);
       }
     } finally {
       console.log("SettingsPage: Fetch complete, setting isLoading to false.");
       setIsLoading(false);
       setDataFetched(true);
     }
-  }, [user, dataFetched]); // Removed showToast from dependencies
+  }, [user, dataFetched, userData, showToast]); // Added userData to dependencies
 
   // Effect to trigger data fetching once when auth is ready
   useEffect(() => {
     if (!authLoading && user && !dataFetched) {
-      console.log("SettingsPage: Triggering fetchUserData");
+      console.log("SettingsPage: Triggering fetchUserData, user is available and not loading");
       fetchUserData();
+    } else if (!authLoading && !user) {
+      console.log("SettingsPage: Auth not loading but no user available");
+      setIsLoading(false); // No point in waiting if there's no user
     }
   }, [authLoading, user, dataFetched, fetchUserData]);
 
@@ -251,6 +261,7 @@ export default function SettingsPage() {
         avatar_url: user.user_metadata?.avatar_url || null,
         github_username: user.user_metadata?.user_name || null
       });
+      console.log("SettingsPage: userData set with github_username from direct metadata:", user?.user_metadata?.user_name || null);
       setDataFetched(true);
     }
   }, [user, userData, isLoading]);
@@ -278,23 +289,23 @@ export default function SettingsPage() {
               <CardDescription>Manage your account information and GitHub integration</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {isLoading ? (
+              {isLoading || authLoading ? (
                 <>
-              <div className="space-y-2">
-                <Label htmlFor="display-name">Display Name</Label>
+                  <div className="space-y-2">
+                    <Label htmlFor="display-name">Display Name</Label>
                     <Skeleton className="h-10 w-full" />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email Address</Label>
                     <Skeleton className="h-10 w-full" />
-              </div>
-              
-              <div className="border-t pt-4 mt-4">
-                <h3 className="text-lg font-medium mb-2">GitHub Connection</h3>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label className="text-base">Connected Account</Label>
+                  </div>
+                  
+                  <div className="border-t pt-4 mt-4">
+                    <h3 className="text-lg font-medium mb-2">GitHub Connection</h3>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label className="text-base">Connected Account</Label>
                         <Skeleton className="h-5 w-40 mt-1" />
                       </div>
                       <Skeleton className="h-10 w-24" />
@@ -346,10 +357,10 @@ export default function SettingsPage() {
                             {userData?.github_username ? `@${userData.github_username}` : (userData?.display_name || 'Unknown GitHub user')}
                           </p>
                         </div>
+                      </div>
+                      <Button variant="outline">Disconnect</Button>
+                    </div>
                   </div>
-                  <Button variant="outline">Disconnect</Button>
-                </div>
-              </div>
                 </>
               )}
               
@@ -458,29 +469,14 @@ export default function SettingsPage() {
                 </select>
               </div>
               
-              <div className="border-t pt-4 mt-4">
-                <h3 className="text-lg font-medium mb-2">Danger Zone</h3>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label className="text-base">Clear All Data</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Delete all locally stored data and preferences
-                      </p>
-                    </div>
-                    <Button variant="destructive">Clear Data</Button>
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label className="text-base">Delete Account</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Permanently delete your account and all associated data
-                      </p>
-                    </div>
-                    <Button variant="destructive">Delete Account</Button>
-                  </div>
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label className="text-base">Debug Mode</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Enable additional logging for troubleshooting
+                  </p>
                 </div>
+                <Switch />
               </div>
             </CardContent>
           </Card>
@@ -489,8 +485,8 @@ export default function SettingsPage() {
         <TabsContent value="demo">
           <Card>
             <CardHeader>
-              <CardTitle>Hooks Demo</CardTitle>
-              <CardDescription>Test the useMobile and useToast hooks</CardDescription>
+              <CardTitle>Demo Components</CardTitle>
+              <CardDescription>Interactive demo of UI components</CardDescription>
             </CardHeader>
             <CardContent>
               <ToastDemo />
@@ -499,7 +495,7 @@ export default function SettingsPage() {
         </TabsContent>
       </Tabs>
       
-      <div className="flex justify-end space-x-2">
+      <div className="flex justify-end gap-4">
         <Button variant="outline">Cancel</Button>
         <Button onClick={handleSaveChanges}>Save Changes</Button>
       </div>

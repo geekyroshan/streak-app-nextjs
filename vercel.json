@@ -17,5 +17,11 @@
         { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" }
       ]
     }
-  ]
+  ],
+  "functions": {
+    "api/github/create-commit": {
+      "runtime": "nodejs18.x"
+    }
+  },
+  "buildCommand": "npm run build"
 } 
