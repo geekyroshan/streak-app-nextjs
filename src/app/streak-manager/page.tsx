@@ -89,6 +89,22 @@ export default function StreakManagerPage() {
     commitMessage: string;
     commitUrl?: string;
   }>>([]);
+  const [scheduledCommits, setScheduledCommits] = useState<Array<{
+    id: string;
+    commitMessage: string;
+    filePath: string;
+    scheduledTime: string;
+    repository: {
+      name: string;
+    };
+  }>>([]);
+  const [loadingScheduled, setLoadingScheduled] = useState(false);
+  const [bulkStartDate, setBulkStartDate] = useState<string>("");
+  const [bulkEndDate, setBulkEndDate] = useState<string>("");
+  const [bulkCommitFrequency, setBulkCommitFrequency] = useState<string>("daily");
+  const [bulkCommitMessageTemplate, setBulkCommitMessageTemplate] = useState<string>("");
+  const [bulkSelectedFiles, setBulkSelectedFiles] = useState<string[]>([]);
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   // Fetch repositories when component mounts
   useEffect(() => {
@@ -111,6 +127,13 @@ export default function StreakManagerPage() {
       fetchFileContent(selectedRepository, selectedFile);
     }
   }, [selectedFile]);
+
+  // Fetch scheduled commits when the schedule tab is selected
+  useEffect(() => {
+    if (activeTab === "schedule-commits" && user) {
+      fetchScheduledCommits();
+    }
+  }, [activeTab, user]);
 
   // Function to fetch repositories from our API
   const fetchRepositories = async () => {
@@ -186,6 +209,27 @@ export default function StreakManagerPage() {
       showToast('Failed to fetch file content', 'error');
     } finally {
       setLoading(prev => ({ ...prev, content: false }));
+    }
+  };
+
+  // Function to fetch scheduled commits
+  const fetchScheduledCommits = async () => {
+    try {
+      setLoadingScheduled(true);
+      const response = await fetch('/api/github/scheduled-commits');
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch scheduled commits');
+      }
+      
+      const data = await response.json();
+      setScheduledCommits(data.data || []);
+    } catch (error) {
+      console.error('Error fetching scheduled commits:', error);
+      showToast('Failed to fetch scheduled commits', 'error');
+    } finally {
+      setLoadingScheduled(false);
     }
   };
 
@@ -306,6 +350,260 @@ export default function StreakManagerPage() {
       showToast(errorMessage, 'error', 10000);
     } finally {
       setLoading(prev => ({ ...prev, content: false }));
+    }
+  };
+
+  // Function to schedule a commit
+  const handleScheduleCommit = async () => {
+    try {
+      // Verify that all required fields are present
+      if (!selectedRepository || !commitDate || !commitTime || !commitMessage || !selectedFile || !fileContent) {
+        showToast('Please fill out all required fields', 'error');
+        return;
+      }
+
+      // Make sure the scheduled date is in the future
+      const scheduledDate = new Date(`${commitDate}T${commitTime}`);
+      if (scheduledDate <= new Date()) {
+        showToast('Scheduled time must be in the future', 'error');
+        return;
+      }
+
+      // Set loading state
+      setLoading(prev => ({ ...prev, content: true }));
+      
+      // Prepare the request body
+      const payload = {
+        repoName: selectedRepository,
+        filePath: selectedFile,
+        commitMessage,
+        fileContent,
+        date: commitDate,
+        time: commitTime
+      };
+      
+      // Make the API request
+      const response = await fetch('/api/github/schedule-commit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      // Handle the response
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to schedule commit');
+      }
+      
+      const data = await response.json();
+      
+      // Show success message
+      showToast('Commit scheduled successfully!', 'success');
+      
+      // Reset form 
+      setCommitMessage('');
+      
+      // Refresh the scheduled commits list
+      fetchScheduledCommits();
+      
+    } catch (error) {
+      console.error('Error scheduling commit:', error);
+      
+      // Try to get more detailed error information
+      let errorMessage = '';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else {
+        errorMessage = 'Failed to schedule commit. Please try again.';
+      }
+      
+      showToast(errorMessage, 'error', 10000);
+    } finally {
+      setLoading(prev => ({ ...prev, content: false }));
+    }
+  };
+
+  // Function to cancel a scheduled commit
+  const handleCancelCommit = async (id: string) => {
+    try {
+      setLoadingScheduled(true);
+      
+      const response = await fetch('/api/github/scheduled-commits', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ id })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to cancel scheduled commit');
+      }
+      
+      showToast('Scheduled commit cancelled successfully', 'success');
+      
+      // Update the local state by removing the cancelled commit
+      setScheduledCommits(prev => prev.filter(commit => commit.id !== id));
+      
+    } catch (error) {
+      console.error('Error cancelling scheduled commit:', error);
+      showToast(
+        error instanceof Error ? error.message : 'Failed to cancel scheduled commit', 
+        'error'
+      );
+    } finally {
+      setLoadingScheduled(false);
+    }
+  };
+
+  // Function to cancel all pending commits
+  const handleCancelAllCommits = async () => {
+    try {
+      setLoadingScheduled(true);
+      
+      // Get all pending commit IDs
+      const pendingIds = scheduledCommits.map(commit => commit.id);
+      
+      if (pendingIds.length === 0) {
+        showToast('No pending commits to cancel', 'info');
+        return;
+      }
+      
+      // Cancel each commit one by one
+      for (const id of pendingIds) {
+        await fetch('/api/github/scheduled-commits', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ id })
+        });
+      }
+      
+      showToast(`Cancelled ${pendingIds.length} scheduled commits`, 'success');
+      
+      // Clear the local state
+      setScheduledCommits([]);
+      
+    } catch (error) {
+      console.error('Error cancelling all scheduled commits:', error);
+      showToast(
+        error instanceof Error ? error.message : 'Failed to cancel scheduled commits', 
+        'error'
+      );
+    } finally {
+      setLoadingScheduled(false);
+    }
+  };
+
+  // Function to handle adding a file to bulk operations list
+  const handleAddFileToBulk = () => {
+    if (!selectedFile) return;
+    
+    // Check if file is already added
+    if (bulkSelectedFiles.includes(selectedFile)) {
+      showToast('This file is already added to the bulk operation', 'info');
+      return;
+    }
+    
+    // Add file to bulk files list
+    setBulkSelectedFiles(prev => [...prev, selectedFile]);
+    showToast(`Added ${selectedFile} to bulk operation`, 'success');
+  };
+  
+  // Function to remove a file from bulk operations list
+  const handleRemoveFileFromBulk = (filePath: string) => {
+    setBulkSelectedFiles(prev => prev.filter(path => path !== filePath));
+  };
+  
+  // Function to handle bulk operation execution
+  const handleExecuteBulkOperation = async () => {
+    try {
+      // Validate required fields
+      if (!selectedRepository || !bulkStartDate || !bulkEndDate || !bulkCommitMessageTemplate || bulkSelectedFiles.length === 0) {
+        showToast('Please fill out all required fields', 'error');
+        return;
+      }
+      
+      if (new Date(bulkStartDate) > new Date(bulkEndDate)) {
+        showToast('Start date cannot be after end date', 'error');
+        return;
+      }
+      
+      // Get file contents for all selected files
+      const fileContents: Record<string, string> = {};
+      
+      setBulkLoading(true);
+      
+      for (const filePath of bulkSelectedFiles) {
+        try {
+          // Fetch content for each file
+          const response = await fetch(`/api/github/file-content?repoName=${encodeURIComponent(selectedRepository)}&path=${encodeURIComponent(filePath)}`);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to fetch content for ${filePath}`);
+          }
+          
+          const data = await response.json();
+          fileContents[filePath] = data.content;
+        } catch (error) {
+          console.error(`Error fetching content for ${filePath}:`, error);
+          showToast(`Failed to fetch content for ${filePath}`, 'error');
+          // Continue with other files, use empty string for content
+          fileContents[filePath] = '';
+        }
+      }
+      
+      // Prepare payload for bulk scheduling
+      const payload = {
+        repoName: selectedRepository,
+        filePaths: bulkSelectedFiles,
+        commitMessageTemplate: bulkCommitMessageTemplate,
+        fileContents,
+        startDate: bulkStartDate,
+        endDate: bulkEndDate,
+        timeOfDay: commitTime || '12:00',
+        frequency: bulkCommitFrequency
+      };
+      
+      // Call the API to schedule bulk commits
+      const response = await fetch('/api/github/bulk-schedule', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to schedule bulk commits');
+      }
+      
+      const data = await response.json();
+      
+      // Show success message
+      showToast(`Successfully scheduled ${data.data.totalCommits} commits`, 'success');
+      
+      // Reset form
+      setBulkSelectedFiles([]);
+      setBulkCommitMessageTemplate('');
+      
+      // Switch to schedule tab to see the scheduled commits
+      setActiveTab("schedule-commits");
+      fetchScheduledCommits();
+      
+    } catch (error) {
+      console.error('Error executing bulk operation:', error);
+      showToast(
+        error instanceof Error ? error.message : 'Failed to execute bulk operation',
+        'error'
+      );
+    } finally {
+      setBulkLoading(false);
     }
   };
 
@@ -790,7 +1088,7 @@ export default function StreakManagerPage() {
                       onChange={(e) => setSelectedFile(e.target.value)}
                       className="w-full mb-2"
                     />
-                    <Button variant="outline" size="sm" className="w-full mb-3">
+                    <Button variant="outline" size="sm" className="w-full mb-3" onClick={handleAddFileToBulk}>
                       + Add to List
                     </Button>
                     <div className="text-xs text-muted-foreground mb-2">
@@ -838,9 +1136,15 @@ export default function StreakManagerPage() {
                   )}
                   <Button 
                     className="w-full"
-                    disabled={!selectedRepository || !commitDate || !commitTime || !commitMessage || !selectedFile}
+                    disabled={!selectedRepository || !commitDate || !commitTime || !commitMessage || !selectedFile || loading.repositories || loading.files || loading.content}
+                    onClick={handleScheduleCommit}
                   >
-                    Schedule Commit
+                    {loading.repositories || loading.files || loading.content ? (
+                      <span className="flex items-center">
+                        <span className="animate-spin h-4 w-4 mr-2 border-t-2 border-b-2 border-primary-foreground rounded-full"></span>
+                        Processing...
+                      </span>
+                    ) : "Schedule Commit"}
                   </Button>
                 </div>
               </CardContent>
@@ -850,15 +1154,58 @@ export default function StreakManagerPage() {
             <div className="mt-8">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-medium">Scheduled Commits</h3>
-                <Button variant="outline" size="sm">
-                  Clean All Pending
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleCancelAllCommits}
+                  disabled={scheduledCommits.length === 0 || loadingScheduled}
+                >
+                  {loadingScheduled ? (
+                    <span className="flex items-center">
+                      <span className="animate-spin h-3 w-3 mr-1 border-t-2 border-b-2 border-primary rounded-full"></span>
+                      Processing...
+                    </span>
+                  ) : "Clean All Pending"}
                 </Button>
               </div>
               <Card>
                 <CardContent className="p-6">
-                  <div className="text-center py-6 text-muted-foreground">
-                    No scheduled commits found
-                  </div>
+                  {loadingScheduled ? (
+                    <div className="flex justify-center items-center h-40">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+                    </div>
+                  ) : scheduledCommits.length === 0 ? (
+                    <div className="text-center py-6 text-muted-foreground">
+                      No scheduled commits found
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {scheduledCommits.map((commit) => (
+                        <div key={commit.id} className="border border-border rounded-md p-3 bg-muted/20">
+                          <div className="flex justify-between items-start">
+                            <div className="flex-grow">
+                              <div className="font-medium text-sm">{commit.repository.name}</div>
+                              <div className="text-xs text-muted-foreground">
+                                Scheduled for {new Date(commit.scheduledTime).toLocaleString()}
+                              </div>
+                              <div className="text-xs text-primary mt-1">{commit.filePath}</div>
+                            </div>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="text-xs text-destructive hover:text-destructive/80"
+                              onClick={() => handleCancelCommit(commit.id)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                          <div className="mt-2">
+                            <div className="text-sm mt-1 break-words">{commit.commitMessage}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -880,11 +1227,11 @@ export default function StreakManagerPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm font-medium block mb-2">Start Date</label>
-                    <Input type="date" className="w-full" />
+                    <Input type="date" className="w-full" value={bulkStartDate} onChange={(e) => setBulkStartDate(e.target.value)} />
                   </div>
                   <div>
                     <label className="text-sm font-medium block mb-2">End Date</label>
-                    <Input type="date" className="w-full" />
+                    <Input type="date" className="w-full" value={bulkEndDate} onChange={(e) => setBulkEndDate(e.target.value)} />
                   </div>
                 </div>
               </CardContent>
@@ -941,8 +1288,10 @@ export default function StreakManagerPage() {
                   <div>
                     <label className="text-sm font-medium block mb-2">Commit Message Template</label>
                     <Textarea 
-                      placeholder="Update documentation for {'{{date}}'}"
+                      placeholder="Update documentation for {{date}}"
                       className="w-full"
+                      value={bulkCommitMessageTemplate}
+                      onChange={(e) => setBulkCommitMessageTemplate(e.target.value)}
                     />
                     <p className="text-xs text-muted-foreground mt-1">
                       Use {"{{date}}"} to include the date in your message
@@ -952,7 +1301,7 @@ export default function StreakManagerPage() {
                   <div>
                     <label className="text-sm font-medium block mb-2">Files to Modify</label>
                     <Input placeholder="docs/README.md" className="w-full mb-2" />
-                    <Button variant="outline" size="sm" className="w-full">
+                    <Button variant="outline" size="sm" className="w-full" onClick={handleAddFileToBulk}>
                       + Add File
                     </Button>
                   </div>
@@ -960,29 +1309,117 @@ export default function StreakManagerPage() {
               </CardContent>
             </Card>
             
-            <Card>
+            {/* Selected Files List */}
+            {bulkSelectedFiles.length > 0 && (
+              <div className="mt-4">
+                <h4 className="text-sm font-medium mb-2">Selected Files:</h4>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {bulkSelectedFiles.map(filePath => (
+                    <div key={filePath} className="flex justify-between items-center p-2 bg-muted/50 rounded-md text-xs">
+                      <span className="truncate flex-1">{filePath}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-destructive"
+                        onClick={() => handleRemoveFileFromBulk(filePath)}
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Frequency Selection */}
+            <div className="mt-4">
+              <label className="text-sm font-medium block mb-2">Frequency</label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={bulkCommitFrequency === "daily" ? "default" : "outline"}
+                  className="justify-start"
+                  onClick={() => setBulkCommitFrequency("daily")}
+                >
+                  <Calendar className="mr-2 h-4 w-4" />
+                  Daily
+                </Button>
+                <Button
+                  type="button"
+                  variant={bulkCommitFrequency === "weekdays" ? "default" : "outline"}
+                  className="justify-start"
+                  onClick={() => setBulkCommitFrequency("weekdays")}
+                >
+                  <Calendar className="mr-2 h-4 w-4" />
+                  Weekdays
+                </Button>
+                <Button
+                  type="button"
+                  variant={bulkCommitFrequency === "weekends" ? "default" : "outline"}
+                  className="justify-start"
+                  onClick={() => setBulkCommitFrequency("weekends")}
+                >
+                  <Calendar className="mr-2 h-4 w-4" />
+                  Weekends
+                </Button>
+                <Button
+                  type="button"
+                  variant={bulkCommitFrequency === "weekly" ? "default" : "outline"}
+                  className="justify-start"
+                  onClick={() => setBulkCommitFrequency("weekly")}
+                >
+                  <Calendar className="mr-2 h-4 w-4" />
+                  Weekly
+                </Button>
+              </div>
+            </div>
+            
+            {/* Schedule Summary */}
+            <Card className="mt-6">
               <CardHeader>
-                <CardTitle>Confirmation</CardTitle>
-                <CardDescription>Review details before proceeding with bulk operation</CardDescription>
+                <CardTitle>Schedule Summary</CardTitle>
+                <CardDescription>Verify details before scheduling</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    You are about to perform a bulk operation that will create commits across multiple dates. 
-                    Please use this feature responsibly.
-                  </p>
-                  
-                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-md">
-                    <div className="flex gap-2 text-amber-500">
-                      <AlertCircle className="h-5 w-5 flex-shrink-0" />
-                      <p className="text-sm">
-                        This will create multiple commits at once. Make sure these reflect actual work you've done.
-                      </p>
-                    </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Repository:</h4>
+                    <p className="text-sm text-muted-foreground mb-3">{selectedRepository || "Not selected"}</p>
+                    
+                    <h4 className="text-sm font-medium mb-1">Date Range:</h4>
+                    <p className="text-sm text-muted-foreground mb-3">{bulkStartDate || "Not selected"}</p>
                   </div>
-                  
-                  <Button className="w-full">
-                    Execute Bulk Operation
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Scheduled For:</h4>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {bulkStartDate && bulkEndDate ? `${bulkStartDate} to ${bulkEndDate}` : "Not scheduled"}
+                    </p>
+                    
+                    <h4 className="text-sm font-medium mb-1">Files:</h4>
+                    <p className="text-sm text-muted-foreground">{bulkSelectedFiles.length > 0 ? bulkSelectedFiles.join(', ') : "No files selected"}</p>
+                  </div>
+                </div>
+                
+                <div className="mt-4 border-t border-border pt-4">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    This will schedule commits to happen automatically on the specified dates.
+                  </p>
+                  {(!selectedRepository || !bulkStartDate || !bulkEndDate || !bulkCommitMessageTemplate || bulkSelectedFiles.length === 0) && (
+                    <div className="text-amber-500 text-sm mb-3">
+                      Please complete all fields
+                    </div>
+                  )}
+                  <Button 
+                    className="w-full"
+                    disabled={!selectedRepository || !bulkStartDate || !bulkEndDate || !bulkCommitMessageTemplate || bulkSelectedFiles.length === 0 || bulkLoading}
+                    onClick={handleExecuteBulkOperation}
+                  >
+                    {bulkLoading ? (
+                      <span className="flex items-center">
+                        <span className="animate-spin h-4 w-4 mr-2 border-t-2 border-b-2 border-primary-foreground rounded-full"></span>
+                        Processing...
+                      </span>
+                    ) : "Execute Bulk Operation"}
                   </Button>
                 </div>
               </CardContent>
