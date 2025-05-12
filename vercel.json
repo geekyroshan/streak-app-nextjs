@@ -15,11 +15,11 @@
       ]
     }
   ],
-  "installCommand": "apt-get update && apt-get install -y git && npm install",
+  "installCommand": "npm install",
   "buildCommand": "npm run build",
   "functions": {
     "src/app/api/github/create-commit/route.ts": {
-      "runtime": "nodejs@21.5.0",
+      "runtime": "nodejs@20.x",
       "memory": 1024
     }
   },
