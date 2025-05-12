@@ -19,11 +19,8 @@
   "buildCommand": "npm run build",
   "crons": [
     {
-      "path": "/api/cron/process-scheduled-commits",
-      "schedule": "0 0 * * *",
-      "headers": {
-        "authorization": "Bearer @CRON_SECRET"
-      }
+      "path": "/api/cron/process-scheduled-commits?token=@CRON_SECRET",
+      "schedule": "0 0 * * *"
     }
   ]
 } 

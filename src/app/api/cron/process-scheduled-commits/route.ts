@@ -9,6 +9,10 @@ import * as path from 'path';
  * POST handler for cron job to process scheduled commits
  * This endpoint should be called by a cron job or scheduler to process pending scheduled commits
  * Requires an API key for authentication in the CRON_SECRET environment variable
+ * 
+ * Authentication can be provided either:
+ * 1. As a Bearer token in the Authorization header
+ * 2. As a query parameter '?token=YOUR_CRON_SECRET' (for Vercel cron jobs)
  */
 export async function POST(request: NextRequest) {
   try {
@@ -29,19 +33,19 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Verify cron secret
-    const authHeader = request.headers.get('authorization');
+    // Get cron secret from environment
     const cronSecret = process.env.CRON_SECRET;
     
-    if (!authHeader) {
-      return NextResponse.json(
-        { error: 'Missing authorization header' },
-        { status: 401 }
-      );
-    }
+    // Check for authentication - support both header and query param
+    const authHeader = request.headers.get('authorization');
+    const url = new URL(request.url);
+    const tokenParam = url.searchParams.get('token');
     
-    // Verify the authorization header is correct
-    if (authHeader !== `Bearer ${cronSecret}`) {
+    // Verify authentication using either method
+    const headerAuth = authHeader === `Bearer ${cronSecret}`;
+    const paramAuth = tokenParam === cronSecret;
+    
+    if (!headerAuth && !paramAuth) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
