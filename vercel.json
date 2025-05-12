@@ -18,7 +18,7 @@
   "installCommand": "apt-get update && apt-get install -y git && npm install",
   "buildCommand": "npm run build",
   "functions": {
-    "api/github/create-commit/**": {
+    "api/github/create-commit/route.ts": {
       "runtime": "nodejs@21.5.0",
       "memory": 1024
     }
