@@ -9,6 +9,13 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: true,
+  // Specify serverless function configuration
+  serverRuntimeConfig: {
+    PROJECT_ROOT: __dirname,
+  },
+  experimental: {
+    serverComponentsExternalPackages: ['child_process', 'fs']
+  },
 };
 
 module.exports = nextConfig;

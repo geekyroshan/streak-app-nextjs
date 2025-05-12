@@ -1,8 +1,5 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "next.config.js", "use": "@vercel/next" }
-  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/$1" }
@@ -18,10 +15,12 @@
       ]
     }
   ],
-  "functions": {
-    "api/github/create-commit": {
-      "runtime": "nodejs18.x"
+  "buildCommand": "npm run build",
+  "installCommand": "npm install --ignore-scripts",
+  "regions": ["iad1"],
+  "build": {
+    "env": {
+      "NEXT_PUBLIC_GIT_EXECUTABLE": "git"
     }
-  },
-  "buildCommand": "npm run build"
+  }
 } 
