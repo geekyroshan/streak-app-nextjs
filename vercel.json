@@ -19,7 +19,7 @@
   "buildCommand": "npm run build",
   "functions": {
     "api/github/create-commit/**": {
-      "runtime": "nodejs18.x",
+      "runtime": "nodejs@18.x",
       "memory": 1024
     }
   },
