@@ -1,5 +1,9 @@
 import { createServerSupabaseClient } from '@/lib/server-supabase';
 import { NextRequest, NextResponse } from 'next/server';
+import git from 'isomorphic-git';
+import http from 'isomorphic-git/http/web';
+import LightningFS from '@isomorphic-git/lightning-fs';
+import * as path from 'path';
 
 // Define body type for the request
 interface BulkScheduleBody {
@@ -11,25 +15,30 @@ interface BulkScheduleBody {
   endDate: string;        // ISO date string for end date
   timeOfDay: string;      // Time string in HH:MM format for all commits
   frequency: 'daily' | 'weekdays' | 'weekends' | 'weekly'; // How often to schedule commits
+  operationType: 'fix' | 'schedule'; // Whether to fix past contributions or schedule future ones
+  times?: string[];       // Optional array of times for randomization
 }
 
 /**
  * POST handler for /api/github/bulk-schedule
  * Creates multiple scheduled commits at once based on date range and frequency
+ * For past dates (operationType='fix'), executes commits immediately
+ * For future dates (operationType='schedule'), schedules them for later execution
  */
 export async function POST(request: NextRequest) {
   try {
     // Parse request body
     const body: BulkScheduleBody = await request.json();
     
-    console.log('Scheduling bulk commits with payload:', {
+    console.log('Processing bulk commits with payload:', {
       repoName: body.repoName,
       filePaths: body.filePaths,
       messageTemplate: body.commitMessageTemplate,
       startDate: body.startDate,
       endDate: body.endDate,
       timeOfDay: body.timeOfDay,
-      frequency: body.frequency
+      frequency: body.frequency,
+      operationType: body.operationType
     });
     
     // Validate required fields
@@ -146,10 +155,25 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Generate scheduled commits for each date
-    const scheduledCommits = [];
+    const now = new Date();
+    const pastDates: Date[] = [];
+    const futureDates: Date[] = [];
     
-    for (const commitDate of commitDates) {
+    // Separate past and future dates
+    commitDates.forEach(date => {
+      if (date < now) {
+        pastDates.push(date);
+      } else {
+        futureDates.push(date);
+      }
+    });
+    
+    // Results to return
+    const scheduledCommits = [];
+    const executedCommits = [];
+    
+    // Process future dates - schedule them
+    for (const commitDate of futureDates) {
       // Format date for commit message template
       const formattedDate = commitDate.toISOString().split('T')[0];
       const commitMessage = body.commitMessageTemplate.replace('{{date}}', formattedDate);
@@ -189,25 +213,133 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    // Process past dates - execute them immediately if operationType is 'fix'
+    if (body.operationType === 'fix' && pastDates.length > 0) {
+      // Create virtual filesystem for git operations
+      const fs = new LightningFS('fs');
+      
+      // Clone the repository
+      const dir = `/repo-${Date.now()}`;
+      await fs.promises.mkdir(dir);
+      
+      // Set up authentication for Git operations
+      const token = userData.github_access_token;
+      const onAuth = () => ({ username: token });
+      
+      await git.clone({
+        fs,
+        http,
+        dir,
+        url: `https://github.com/${repoFullName}.git`,
+        singleBranch: true,
+        depth: 1,
+        onAuth
+      });
+      
+      // Process each past date
+      for (const commitDate of pastDates) {
+        // Format date for commit message template
+        const formattedDate = commitDate.toISOString().split('T')[0];
+        const commitMessage = body.commitMessageTemplate.replace('{{date}}', formattedDate);
+        
+        // Set the time part of the date
+        const [hours, minutes] = body.timeOfDay.split(':').map(Number);
+        commitDate.setHours(hours, minutes, 0, 0);
+        
+        // For each file path, create a commit
+        for (const filePath of body.filePaths) {
+          try {
+            const fileContent = body.fileContents[filePath] || '';
+            
+            // Ensure the file directory exists
+            const fullFilePath = path.join(dir, filePath);
+            const pathParts = path.dirname(fullFilePath).split('/').filter(Boolean);
+            let currentPath = '';
+            
+            for (const part of pathParts) {
+              currentPath += '/' + part;
+              try {
+                await fs.promises.mkdir(currentPath);
+              } catch (err: any) {
+                // Ignore directory exists error
+                if (err.code !== 'EEXIST') throw err;
+              }
+            }
+            
+            // Write file content
+            await fs.promises.writeFile(fullFilePath, fileContent);
+            
+            // Add the file
+            await git.add({
+              fs,
+              dir,
+              filepath: filePath
+            });
+            
+            // Get user config (needed for the commit)
+            const authorName = userData.github_username || 'GitHub User';
+            const authorEmail = `${authorName}@users.noreply.github.com`;
+            
+            // Set author date to the past date
+            const commitResult = await git.commit({
+              fs,
+              dir,
+              message: commitMessage,
+              author: {
+                name: authorName,
+                email: authorEmail,
+                timestamp: Math.floor(commitDate.getTime() / 1000),
+                timezoneOffset: new Date().getTimezoneOffset()
+              }
+            });
+            
+            // Push the commit
+            await git.push({
+              fs,
+              http,
+              dir,
+              remote: 'origin',
+              ref: 'HEAD',
+              onAuth
+            });
+            
+            // Record the executed commit
+            executedCommits.push({
+              date: formattedDate,
+              time: body.timeOfDay,
+              filePath,
+              commitSha: commitResult
+            });
+            
+          } catch (error) {
+            console.error(`Error executing commit for ${formattedDate}:`, error);
+            // Continue with other files/dates
+          }
+        }
+      }
+    }
+    
     // Return successful response
     return NextResponse.json({
       success: true,
       data: {
         scheduledCommits,
-        totalCommits: scheduledCommits.length
+        executedCommits,
+        totalScheduled: scheduledCommits.length,
+        totalExecuted: executedCommits.length
       },
-      message: `Successfully scheduled ${scheduledCommits.length} commits`
+      message: `Successfully processed ${scheduledCommits.length + executedCommits.length} commits (${scheduledCommits.length} scheduled, ${executedCommits.length} executed)`
     });
     
   } catch (error: unknown) {
-    console.error('Error scheduling bulk commits:', error);
+    console.error('Error processing bulk commits:', error);
     
     // Get error message
     const errorMessage = error instanceof Error ? error.message : String(error);
     
     // Return appropriate error response
     return NextResponse.json(
-      { error: `Failed to schedule bulk commits: ${errorMessage}` },
+      { error: `Failed to process bulk commits: ${errorMessage}` },
       { status: 500 }
     );
   }

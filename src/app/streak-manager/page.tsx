@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Calendar, Clock, GitBranch, MessageSquarePlus, CalendarDays, FileEdit, GitCommit, AlertCircle } from 'lucide-react';
+import { Calendar, Clock, GitBranch, MessageSquarePlus, CalendarDays, FileEdit, GitCommit, AlertCircle, RefreshCw, X, FileText } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
@@ -105,6 +105,21 @@ export default function StreakManagerPage() {
   const [bulkCommitMessageTemplate, setBulkCommitMessageTemplate] = useState<string>("");
   const [bulkSelectedFiles, setBulkSelectedFiles] = useState<string[]>([]);
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkOperationType, setBulkOperationType] = useState<'fix' | 'schedule'>('schedule');
+  const [bulkTimes, setBulkTimes] = useState<string[]>([]);
+  const [selectedBulkTime, setSelectedBulkTime] = useState<string>("");
+  const [commonCommitMessages, setCommonCommitMessages] = useState<string[]>([
+    "Update documentation",
+    "Fix typo in README",
+    "Update dependencies",
+    "Add comments for clarity",
+    "Refactor code for better readability",
+    "Fix formatting issues",
+    "Update configuration files",
+    "Improve error handling"
+  ]);
+  const [repositoryFiles, setRepositoryFiles] = useState<string[]>([]);
+  const [fileSearchQuery, setFileSearchQuery] = useState<string>("");
 
   // Fetch repositories when component mounts
   useEffect(() => {
@@ -364,7 +379,8 @@ export default function StreakManagerPage() {
 
       // Make sure the scheduled date is in the future
       const scheduledDate = new Date(`${commitDate}T${commitTime}`);
-      if (scheduledDate <= new Date()) {
+      const now = new Date();
+      if (scheduledDate <= now) {
         showToast('Scheduled time must be in the future', 'error');
         return;
       }
@@ -519,6 +535,29 @@ export default function StreakManagerPage() {
     setBulkSelectedFiles(prev => prev.filter(path => path !== filePath));
   };
   
+  // Function to generate random times
+  const generateRandomTimes = () => {
+    const times = [];
+    // Generate 5 random times between 9 AM and 11 PM
+    for (let i = 0; i < 5; i++) {
+      const hour = Math.floor(Math.random() * 14) + 9; // 9 AM to 11 PM (9 + 0 to 13)
+      const minute = Math.floor(Math.random() * 60);
+      const hourStr = hour.toString().padStart(2, '0');
+      const minuteStr = minute.toString().padStart(2, '0');
+      times.push(`${hourStr}:${minuteStr}`);
+    }
+    setBulkTimes(times);
+    // Set the first time as selected
+    if (times.length > 0) {
+      setSelectedBulkTime(times[0]);
+    }
+  };
+  
+  // Function to select a commit message template
+  const selectCommitMessage = (message: string) => {
+    setBulkCommitMessageTemplate(message + " for {{date}}");
+  };
+
   // Function to handle bulk operation execution
   const handleExecuteBulkOperation = async () => {
     try {
@@ -565,8 +604,10 @@ export default function StreakManagerPage() {
         fileContents,
         startDate: bulkStartDate,
         endDate: bulkEndDate,
-        timeOfDay: commitTime || '12:00',
-        frequency: bulkCommitFrequency
+        timeOfDay: selectedBulkTime || commitTime || '12:00',
+        frequency: bulkCommitFrequency,
+        operationType: bulkOperationType,
+        times: bulkTimes
       };
       
       // Call the API to schedule bulk commits
@@ -580,13 +621,13 @@ export default function StreakManagerPage() {
       
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to schedule bulk commits');
+        throw new Error(errorData.error || 'Failed to process bulk commits');
       }
       
       const data = await response.json();
       
       // Show success message
-      showToast(`Successfully scheduled ${data.data.totalCommits} commits`, 'success');
+      showToast(`Successfully processed ${data.data.totalScheduled + data.data.totalExecuted} commits (${data.data.totalScheduled} scheduled, ${data.data.totalExecuted} executed)`, 'success');
       
       // Reset form
       setBulkSelectedFiles([]);
@@ -606,6 +647,136 @@ export default function StreakManagerPage() {
       setBulkLoading(false);
     }
   };
+
+  // Update the fetchRepositoryFiles function to properly set loading state
+  const fetchRepositoryFiles = async (repoName: string) => {
+    try {
+      setLoading(prevState => ({ ...prevState, files: true }));
+      const response = await fetch(`/api/github/repository-files?repoName=${encodeURIComponent(repoName)}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch repository files');
+      }
+      
+      const data = await response.json();
+      setRepositoryFiles(data.files || []);
+    } catch (error) {
+      console.error('Error fetching repository files:', error);
+      showToast(
+        error instanceof Error ? error.message : 'Failed to fetch repository files',
+        'error'
+      );
+      setRepositoryFiles([]);
+    } finally {
+      setLoading(prevState => ({ ...prevState, files: false }));
+    }
+  };
+
+  // Update the handleFileSelect function to properly set loading state and handle null
+  const handleFileSelect = async (filePath: string) => {
+    try {
+      setSelectedFile(filePath);
+      setLoading(prevState => ({ ...prevState, content: true }));
+      
+      // Fetch file content
+      const response = await fetch(`/api/github/file-content?repoName=${encodeURIComponent(selectedRepository || '')}&path=${encodeURIComponent(filePath)}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch file content');
+      }
+      
+      const data = await response.json();
+      setFileContent(data.content || '');
+    } catch (error) {
+      console.error('Error fetching file content:', error);
+      showToast(
+        error instanceof Error ? error.message : 'Failed to fetch file content',
+        'error'
+      );
+      setFileContent('');
+    } finally {
+      setLoading(prevState => ({ ...prevState, content: false }));
+    }
+  };
+
+  // Add this function to render file selection UI
+  const renderFileSelection = () => {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Input 
+            placeholder="Search files..."
+            value={fileSearchQuery}
+            onChange={(e) => setFileSearchQuery(e.target.value)}
+            className="flex-1"
+          />
+          <Button 
+            variant="outline" 
+            size="icon" 
+            onClick={() => selectedRepository && fetchRepositoryFiles(selectedRepository)}
+            disabled={!selectedRepository}
+          >
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
+        
+        <div className="max-h-60 overflow-y-auto border rounded-md">
+          {repositoryFiles.length === 0 ? (
+            <div className="p-4 text-center text-muted-foreground">
+              {loading ? 'Loading files...' : 'No files found. Select a repository and click refresh.'}
+            </div>
+          ) : (
+            <ul className="divide-y">
+              {repositoryFiles
+                .filter(file => !fileSearchQuery || file.toLowerCase().includes(fileSearchQuery.toLowerCase()))
+                .map((file, index) => (
+                  <li key={index} className="px-3 py-2 hover:bg-muted cursor-pointer" onClick={() => handleFileSelect(file)}>
+                    <div className="flex items-center">
+                      <FileText className="h-4 w-4 mr-2 text-muted-foreground" />
+                      <span className="text-sm truncate">{file}</span>
+                    </div>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
+        
+        {selectedFile && (
+          <div className="flex items-center justify-between bg-muted p-2 rounded-md">
+            <div className="flex items-center">
+              <FileText className="h-4 w-4 mr-2 text-primary" />
+              <span className="text-sm font-medium truncate">{selectedFile}</span>
+            </div>
+            <Button variant="ghost" size="icon" onClick={() => setSelectedFile('')}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Add this function to render file content editor
+  const renderFileContent = () => {
+    return (
+      <div className="space-y-2">
+        <label className="text-sm font-medium">File Content</label>
+        <Textarea 
+          value={fileContent} 
+          onChange={(e) => setFileContent(e.target.value)}
+          className="font-mono text-sm h-40"
+          placeholder="File content will appear here"
+        />
+      </div>
+    );
+  };
+
+  // Update the useEffect for repository selection to also fetch files
+  useEffect(() => {
+    if (selectedRepository) {
+      fetchRepositoryFiles(selectedRepository);
+    }
+  }, [selectedRepository]);
 
   // Loading repositories state
   const renderRepositories = () => {
@@ -643,103 +814,6 @@ export default function StreakManagerPage() {
             <div className="text-xs text-muted-foreground">Last commit {repo.lastUpdatedText}</div>
           </Button>
         ))}
-      </div>
-    );
-  };
-
-  // Render file content or loading state
-  const renderFileContent = () => {
-    if (loading.content) {
-      return (
-        <div className="flex justify-center items-center h-40">
-          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
-        </div>
-      );
-    }
-
-    if (!selectedFile) {
-      return (
-        <div className="text-center text-muted-foreground p-4">
-          Please select a file to edit
-        </div>
-      );
-    }
-
-    return (
-      <div>
-        <h4 className="text-sm font-medium mb-2">File Content</h4>
-        <div className="bg-muted/30 border border-border rounded-md p-3 min-h-[500px] text-sm">
-          {fileContent ? (
-            <textarea 
-              className="w-full min-h-[500px] h-[70vh] bg-transparent focus:outline-none resize-y"
-              value={fileContent}
-              onChange={(e) => setFileContent(e.target.value)}
-            />
-          ) : (
-            <div className="text-muted-foreground text-center py-2">
-              // No content or binary file
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  // Render file selection interface
-  const renderFileSelection = () => {
-    if (!selectedRepository) {
-      return (
-        <div className="text-center text-muted-foreground p-4">
-          Please select a repository first
-        </div>
-      );
-    }
-
-    if (loading.files) {
-      return (
-        <div className="flex justify-center items-center h-40">
-          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="space-y-2">
-        <div className="text-sm font-medium mb-1">Current path: /{currentPath}</div>
-        <div className="border border-border rounded-md max-h-[200px] overflow-y-auto">
-          {files.length === 0 ? (
-            <div className="p-4 text-center text-muted-foreground">
-              No files found in this directory
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {files.map((file) => (
-                <div 
-                  key={file.path} 
-                  className={`p-2 flex items-center hover:bg-muted cursor-pointer ${
-                    selectedFile === file.path ? 'bg-muted' : ''
-                  }`}
-                  onClick={() => handleFileClick(file)}
-                >
-                  {file.isDirectory ? (
-                    <div className="mr-2 text-primary">
-                      <div className="flex items-center justify-center w-5 h-5">
-                        📁
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mr-2 text-muted-foreground">
-                      <div className="flex items-center justify-center w-5 h-5">
-                        📄
-                      </div>
-                    </div>
-                  )}
-                  <span className="text-sm">{file.name}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
     );
   };
@@ -1024,6 +1098,7 @@ export default function StreakManagerPage() {
                       value={commitDate}
                       onChange={(e) => setCommitDate(e.target.value)}
                       className="w-full"
+                      min={new Date().toISOString().split('T')[0]}
                     />
                     <div className="text-xs text-muted-foreground mt-2">
                       Saturday
@@ -1079,21 +1154,15 @@ export default function StreakManagerPage() {
                       <FileEdit className="h-5 w-5 text-primary" />
                       Files to Change
                     </CardTitle>
-                    <CardDescription>Add one or more files to be modified with each commit</CardDescription>
+                    <CardDescription>Select a file to be modified with your commit</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <Input 
-                      placeholder="docs/api-reference.md"
-                      value={selectedFile}
-                      onChange={(e) => setSelectedFile(e.target.value)}
-                      className="w-full mb-2"
-                    />
-                    <Button variant="outline" size="sm" className="w-full mb-3" onClick={handleAddFileToBulk}>
-                      + Add to List
-                    </Button>
-                    <div className="text-xs text-muted-foreground mb-2">
-                      Add one or more files to be modified with each commit
-                    </div>
+                    {renderFileSelection()}
+                    {selectedFile && (
+                      <div className="mt-3">
+                        {renderFileContent()}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -1274,15 +1343,57 @@ export default function StreakManagerPage() {
                   <div>
                     <label className="text-sm font-medium block mb-2">Operation Type</label>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <Button variant="outline" className="justify-start">
+                      <Button 
+                        variant={bulkOperationType === "fix" ? "default" : "outline"} 
+                        className="justify-start"
+                        onClick={() => setBulkOperationType("fix")}
+                      >
                         <GitCommit className="mr-2 h-4 w-4" />
                         Fix Contribution Gaps
                       </Button>
-                      <Button variant="outline" className="justify-start">
+                      <Button 
+                        variant={bulkOperationType === "schedule" ? "default" : "outline"} 
+                        className="justify-start"
+                        onClick={() => setBulkOperationType("schedule")}
+                      >
                         <CalendarDays className="mr-2 h-4 w-4" />
                         Schedule Regular Commits
                       </Button>
                     </div>
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium block mb-2">Commit Time</label>
+                    <div className="flex gap-2 mb-2">
+                      <Input 
+                        type="time" 
+                        value={selectedBulkTime}
+                        onChange={(e) => setSelectedBulkTime(e.target.value)}
+                        className="flex-1"
+                      />
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={generateRandomTimes}
+                        className="whitespace-nowrap"
+                      >
+                        Generate Random Times
+                      </Button>
+                    </div>
+                    {bulkTimes.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {bulkTimes.map((time, index) => (
+                          <Button
+                            key={index}
+                            variant={selectedBulkTime === time ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setSelectedBulkTime(time)}
+                          >
+                            {time}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   
                   <div>
@@ -1296,6 +1407,22 @@ export default function StreakManagerPage() {
                     <p className="text-xs text-muted-foreground mt-1">
                       Use {"{{date}}"} to include the date in your message
                     </p>
+                    
+                    <div className="mt-2">
+                      <label className="text-xs font-medium block mb-1">Common Messages:</label>
+                      <div className="flex flex-wrap gap-2">
+                        {commonCommitMessages.map((message, index) => (
+                          <Button
+                            key={index}
+                            variant="outline"
+                            size="sm"
+                            onClick={() => selectCommitMessage(message)}
+                          >
+                            {message}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                   
                   <div>
