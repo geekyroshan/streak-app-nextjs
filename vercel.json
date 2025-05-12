@@ -19,7 +19,7 @@
   "buildCommand": "npm run build",
   "functions": {
     "src/app/api/github/create-commit/route.ts": {
-      "runtime": "nodejs@20.x",
+      "runtime": "nodejs@21.5.0",
       "memory": 1024
     }
   },
