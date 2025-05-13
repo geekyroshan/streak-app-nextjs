@@ -1,8 +1,8 @@
 import { createServerSupabaseClient } from '@/lib/server-supabase';
+import { createGitHubClient } from '@/lib/github-client';
+import { gql } from '@apollo/client';
 import { NextRequest, NextResponse } from 'next/server';
-import git from 'isomorphic-git';
-import http from 'isomorphic-git/http/web';
-import LightningFS from '@isomorphic-git/lightning-fs';
+import { Octokit } from '@octokit/rest';
 import * as path from 'path';
 
 // Define body type for the request
@@ -38,12 +38,13 @@ export async function POST(request: NextRequest) {
       endDate: body.endDate,
       timeOfDay: body.timeOfDay,
       frequency: body.frequency,
-      operationType: body.operationType
+      operationType: body.operationType,
+      times: body.times || []
     });
     
     // Validate required fields
     if (!body.repoName || !body.filePaths.length || !body.commitMessageTemplate || 
-        !body.startDate || !body.endDate || !body.timeOfDay || !body.frequency) {
+        !body.startDate || !body.endDate || !body.frequency) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -172,14 +173,31 @@ export async function POST(request: NextRequest) {
     const scheduledCommits = [];
     const executedCommits = [];
     
+    // Initialize GitHub GraphQL client
+    const githubClient = createGitHubClient(userData.github_access_token);
+    
+    // Initialize GitHub REST API client
+    const octokit = new Octokit({
+      auth: userData.github_access_token
+    });
+    
     // Process future dates - schedule them
     for (const commitDate of futureDates) {
       // Format date for commit message template
       const formattedDate = commitDate.toISOString().split('T')[0];
+      
+      // Choose a commit time - use the specified time or random from the array
+      let commitTime = body.timeOfDay;
+      if (body.times && body.times.length > 0) {
+        // Randomly select a time from the provided times array
+        const randomIndex = Math.floor(Math.random() * body.times.length);
+        commitTime = body.times[randomIndex];
+      }
+      
       const commitMessage = body.commitMessageTemplate.replace('{{date}}', formattedDate);
       
       // Set the time part of the date
-      const [hours, minutes] = body.timeOfDay.split(':').map(Number);
+      const [hours, minutes] = commitTime.split(':').map(Number);
       commitDate.setHours(hours, minutes, 0, 0);
       
       // For each file path, create a scheduled commit
@@ -207,7 +225,7 @@ export async function POST(request: NextRequest) {
         scheduledCommits.push({
           id: commit.id,
           date: formattedDate,
-          time: body.timeOfDay,
+          time: commitTime,
           filePath
         });
       }
@@ -215,106 +233,157 @@ export async function POST(request: NextRequest) {
     
     // Process past dates - execute them immediately if operationType is 'fix'
     if (body.operationType === 'fix' && pastDates.length > 0) {
-      // Create virtual filesystem for git operations
-      const fs = new LightningFS('fs');
+      // GraphQL query to get default branch and latest commit
+      const GET_REPO_INFO = gql`
+        query GetRepoInfo($owner: String!, $name: String!) {
+          repository(owner: $owner, name: $name) {
+            defaultBranchRef {
+              name
+              target {
+                ... on Commit {
+                  oid
+                  tree {
+                    oid
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
       
-      // Clone the repository
-      const dir = `/repo-${Date.now()}`;
-      await fs.promises.mkdir(dir);
-      
-      // Set up authentication for Git operations
-      const token = userData.github_access_token;
-      const onAuth = () => ({ username: token });
-      
-      await git.clone({
-        fs,
-        http,
-        dir,
-        url: `https://github.com/${repoFullName}.git`,
-        singleBranch: true,
-        depth: 1,
-        onAuth
+      // Get repository info
+      const { data: repoData } = await githubClient.query({
+        query: GET_REPO_INFO,
+        variables: { owner, name: repo }
       });
+      
+      const defaultBranch = repoData.repository.defaultBranchRef.name;
+      const latestCommitSha = repoData.repository.defaultBranchRef.target.oid;
       
       // Process each past date
       for (const commitDate of pastDates) {
         // Format date for commit message template
         const formattedDate = commitDate.toISOString().split('T')[0];
+        
+        // Choose a commit time - use the specified time or random from the array
+        let commitTime = body.timeOfDay;
+        if (body.times && body.times.length > 0) {
+          // Randomly select a time from the provided times array
+          const randomIndex = Math.floor(Math.random() * body.times.length);
+          commitTime = body.times[randomIndex];
+        }
+        
         const commitMessage = body.commitMessageTemplate.replace('{{date}}', formattedDate);
         
         // Set the time part of the date
-        const [hours, minutes] = body.timeOfDay.split(':').map(Number);
+        const [hours, minutes] = commitTime.split(':').map(Number);
         commitDate.setHours(hours, minutes, 0, 0);
         
-        // For each file path, create a commit
-        for (const filePath of body.filePaths) {
-          try {
+        try {
+          // Get the latest commit on the default branch
+          const { data: latestCommit } = await octokit.git.getCommit({
+            owner,
+            repo,
+            commit_sha: latestCommitSha
+          });
+          
+          // For each file, create a commit
+          for (const filePath of body.filePaths) {
             const fileContent = body.fileContents[filePath] || '';
             
-            // Ensure the file directory exists
-            const fullFilePath = path.join(dir, filePath);
-            const pathParts = path.dirname(fullFilePath).split('/').filter(Boolean);
-            let currentPath = '';
-            
-            for (const part of pathParts) {
-              currentPath += '/' + part;
+            try {
+              // Check if the file already exists
+              let blobSha;
               try {
-                await fs.promises.mkdir(currentPath);
-              } catch (err: any) {
-                // Ignore directory exists error
-                if (err.code !== 'EEXIST') throw err;
+                const { data: content } = await octokit.repos.getContent({
+                  owner,
+                  repo,
+                  path: filePath,
+                  ref: defaultBranch
+                });
+                
+                // If content is an array, it means filePath is a directory
+                if (Array.isArray(content)) {
+                  throw new Error(`${filePath} is a directory, not a file`);
+                }
+                
+                // File exists, get its blob SHA
+                blobSha = content.sha;
+              } catch (error: any) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+                // File doesn't exist yet, we'll create it
               }
+              
+              // Create a new blob for the file content
+              const { data: blob } = await octokit.git.createBlob({
+                owner,
+                repo,
+                content: Buffer.from(fileContent).toString('base64'),
+                encoding: 'base64'
+              });
+              
+              // Create a new tree with the updated file
+              const { data: tree } = await octokit.git.createTree({
+                owner,
+                repo,
+                base_tree: latestCommit.tree.sha,
+                tree: [
+                  {
+                    path: filePath,
+                    mode: '100644', // Normal file mode
+                    type: 'blob',
+                    sha: blob.sha
+                  }
+                ]
+              });
+              
+              // Create a new commit with the backdate
+              const { data: commit } = await octokit.git.createCommit({
+                owner,
+                repo,
+                message: commitMessage,
+                tree: tree.sha,
+                parents: [latestCommitSha],
+                author: {
+                  name: userData.github_username || 'GitHub User',
+                  email: `${userData.github_username || 'user'}@users.noreply.github.com`,
+                  date: commitDate.toISOString()
+                },
+                committer: {
+                  name: userData.github_username || 'GitHub User',
+                  email: `${userData.github_username || 'user'}@users.noreply.github.com`,
+                  date: commitDate.toISOString()
+                }
+              });
+              
+              // Update the reference
+              await octokit.git.updateRef({
+                owner,
+                repo,
+                ref: `heads/${defaultBranch}`,
+                sha: commit.sha,
+                force: true // Use force to ensure the ref is updated regardless of conflicts
+              });
+              
+              // Record the successful commit
+              executedCommits.push({
+                date: formattedDate,
+                time: commitTime,
+                filePath,
+                commitSha: commit.sha
+              });
+              
+            } catch (error) {
+              console.error(`Error creating commit for ${filePath} on ${formattedDate}:`, error);
+              // Continue with other files
             }
-            
-            // Write file content
-            await fs.promises.writeFile(fullFilePath, fileContent);
-            
-            // Add the file
-            await git.add({
-              fs,
-              dir,
-              filepath: filePath
-            });
-            
-            // Get user config (needed for the commit)
-            const authorName = userData.github_username || 'GitHub User';
-            const authorEmail = `${authorName}@users.noreply.github.com`;
-            
-            // Set author date to the past date
-            const commitResult = await git.commit({
-              fs,
-              dir,
-              message: commitMessage,
-              author: {
-                name: authorName,
-                email: authorEmail,
-                timestamp: Math.floor(commitDate.getTime() / 1000),
-                timezoneOffset: new Date().getTimezoneOffset()
-              }
-            });
-            
-            // Push the commit
-            await git.push({
-              fs,
-              http,
-              dir,
-              remote: 'origin',
-              ref: 'HEAD',
-              onAuth
-            });
-            
-            // Record the executed commit
-            executedCommits.push({
-              date: formattedDate,
-              time: body.timeOfDay,
-              filePath,
-              commitSha: commitResult
-            });
-            
-          } catch (error) {
-            console.error(`Error executing commit for ${formattedDate}:`, error);
-            // Continue with other files/dates
           }
+        } catch (error) {
+          console.error(`Error processing date ${formattedDate}:`, error);
+          // Continue with other dates
         }
       }
     }

@@ -538,19 +538,40 @@ export default function StreakManagerPage() {
   
   // Function to generate random times
   const generateRandomTimes = () => {
-    const times = [];
-    // Generate 5 random times between 9 AM and 11 PM
-    for (let i = 0; i < 5; i++) {
-      const hour = Math.floor(Math.random() * 14) + 9; // 9 AM to 11 PM (9 + 0 to 13)
+    // Define time ranges for more realistic commit patterns
+    const timeRanges = [
+      { start: 9, end: 12 },  // Morning: 9am-12pm
+      { start: 13, end: 17 }, // Afternoon: 1pm-5pm
+      { start: 18, end: 22 }  // Evening: 6pm-10pm
+    ];
+    
+    const newTimes = new Set<string>(); // Use a Set to avoid duplicates
+    
+    // Generate at least one time from each range
+    timeRanges.forEach(range => {
+      const hour = Math.floor(Math.random() * (range.end - range.start + 1)) + range.start;
       const minute = Math.floor(Math.random() * 60);
       const hourStr = hour.toString().padStart(2, '0');
       const minuteStr = minute.toString().padStart(2, '0');
-      times.push(`${hourStr}:${minuteStr}`);
+      newTimes.add(`${hourStr}:${minuteStr}`);
+    });
+    
+    // Add 2 more random times to have variety
+    for (let i = 0; i < 2; i++) {
+      const hour = Math.floor(Math.random() * 14) + 9; // 9am to 10pm
+      const minute = Math.floor(Math.random() * 60);
+      const hourStr = hour.toString().padStart(2, '0');
+      const minuteStr = minute.toString().padStart(2, '0');
+      newTimes.add(`${hourStr}:${minuteStr}`);
     }
-    setBulkTimes(times);
-    // Set the first time as selected
-    if (times.length > 0) {
-      setSelectedBulkTime(times[0]);
+    
+    // Convert set to array and sort by time
+    const sortedTimes = Array.from(newTimes).sort();
+    setBulkTimes(sortedTimes);
+    
+    // Also set the selected time to one of these random times
+    if (sortedTimes.length > 0) {
+      setSelectedBulkTime(sortedTimes[0]);
     }
   };
   
@@ -597,6 +618,14 @@ export default function StreakManagerPage() {
         }
       }
       
+      // Make sure we have at least one time selected
+      if (!selectedBulkTime && bulkTimes.length === 0) {
+        // If no times are selected, use the current time as default
+        const now = new Date();
+        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+        setSelectedBulkTime(timeStr);
+      }
+      
       // Prepare payload for bulk scheduling
       const payload = {
         repoName: selectedRepository,
@@ -605,11 +634,13 @@ export default function StreakManagerPage() {
         fileContents,
         startDate: bulkStartDate,
         endDate: bulkEndDate,
-        timeOfDay: selectedBulkTime || commitTime || '12:00',
+        timeOfDay: selectedBulkTime || '12:00', // Default time if none selected
         frequency: bulkCommitFrequency,
         operationType: bulkOperationType,
-        times: bulkTimes
+        times: bulkTimes.length > 0 ? bulkTimes : undefined // Only include times if we have some
       };
+      
+      console.log('Sending bulk operation payload:', payload);
       
       // Call the API to schedule bulk commits
       const response = await fetch('/api/github/bulk-schedule', {
@@ -1368,21 +1399,49 @@ export default function StreakManagerPage() {
                         Generate Random Times
                       </Button>
                     </div>
-                    {bulkTimes.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {bulkTimes.map((time, index) => (
-                          <Button
-                            key={index}
-                            variant={selectedBulkTime === time ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => setSelectedBulkTime(time)}
+                    
+                    {bulkTimes.length > 0 ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-medium">Random Times (will be used randomly for each date)</label>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-6 text-xs"
+                            onClick={() => setBulkTimes([])}
                           >
-                            {time}
+                            Clear All
                           </Button>
-                        ))}
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {bulkTimes.map((time, index) => (
+                            <div key={index} className="flex items-center gap-1 bg-muted rounded-md px-2 py-1">
+                              <span className="text-xs">{time}</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive"
+                                onClick={() => {
+                                  const newTimes = [...bulkTimes];
+                                  newTimes.splice(index, 1);
+                                  setBulkTimes(newTimes);
+                                }}
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          These times will be randomly assigned to different dates to make the streak look more natural.
+                        </p>
                       </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Generate random times to make your commit pattern look more natural, or just use the single time above.
+                      </p>
                     )}
-                </div>
+                  </div>
                   
                   <div>
                     <label className="text-sm font-medium block mb-2">Commit Message Template</label>
@@ -1415,9 +1474,15 @@ export default function StreakManagerPage() {
                   
                   <div>
                     <label className="text-sm font-medium block mb-2">Files to Modify</label>
-                    <Input placeholder="docs/README.md" className="w-full mb-2" />
-                    <Button variant="outline" size="sm" className="w-full" onClick={handleAddFileToBulk}>
-                      + Add File
+                    {renderFileSelection()}
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full mt-3" 
+                      onClick={handleAddFileToBulk}
+                      disabled={!selectedFile}
+                    >
+                      + Add Selected File to Bulk Operation
                     </Button>
                   </div>
                 </div>
