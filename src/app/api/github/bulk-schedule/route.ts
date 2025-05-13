@@ -259,7 +259,10 @@ export async function POST(request: NextRequest) {
       });
       
       const defaultBranch = repoData.repository.defaultBranchRef.name;
-      const latestCommitSha = repoData.repository.defaultBranchRef.target.oid;
+      let latestCommitSha = repoData.repository.defaultBranchRef.target.oid;
+      
+      // Sort past dates from oldest to newest for chronological commits
+      pastDates.sort((a, b) => a.getTime() - b.getTime());
       
       // Process each past date
       for (const commitDate of pastDates) {
@@ -367,6 +370,9 @@ export async function POST(request: NextRequest) {
                 sha: commit.sha,
                 force: true // Use force to ensure the ref is updated regardless of conflicts
               });
+              
+              // Update latestCommitSha to the new commit SHA for the next iteration
+              latestCommitSha = commit.sha;
               
               // Record the successful commit
               executedCommits.push({

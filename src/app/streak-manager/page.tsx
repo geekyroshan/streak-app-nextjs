@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Calendar, Clock, GitBranch, MessageSquarePlus, CalendarDays, FileEdit, GitCommit, AlertCircle, RefreshCw, X, FileText, Folder } from 'lucide-react';
+import { Calendar, Clock, GitBranch, MessageSquarePlus, CalendarDays, FileEdit, GitCommit, AlertCircle, RefreshCw, X, FileText, Folder, Briefcase, Coffee, CalendarRange } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
@@ -540,24 +540,46 @@ export default function StreakManagerPage() {
   const generateRandomTimes = () => {
     // Define time ranges for more realistic commit patterns
     const timeRanges = [
-      { start: 9, end: 12 },  // Morning: 9am-12pm
-      { start: 13, end: 17 }, // Afternoon: 1pm-5pm
-      { start: 18, end: 22 }  // Evening: 6pm-10pm
+      { start: 9, end: 12 },    // Morning: 9am-12pm
+      { start: 13, end: 17 },   // Afternoon: 1pm-5pm
+      { start: 18, end: 22 },   // Evening: 6pm-10pm
+      { start: 22, end: 23.5 }  // Late night: 10pm-11:30pm (occasional)
     ];
     
     const newTimes = new Set<string>(); // Use a Set to avoid duplicates
     
-    // Generate at least one time from each range
-    timeRanges.forEach(range => {
+    // Generate at least one time from each main range (morning, afternoon, evening)
+    for (let i = 0; i < 3; i++) {
+      const range = timeRanges[i];
       const hour = Math.floor(Math.random() * (range.end - range.start + 1)) + range.start;
       const minute = Math.floor(Math.random() * 60);
       const hourStr = hour.toString().padStart(2, '0');
       const minuteStr = minute.toString().padStart(2, '0');
       newTimes.add(`${hourStr}:${minuteStr}`);
-    });
+    }
     
-    // Add 2 more random times to have variety
-    for (let i = 0; i < 2; i++) {
+    // Add a late night commit with lower probability (30%)
+    if (Math.random() < 0.3) {
+      const hour = Math.floor(Math.random() * 2) + 22; // 10pm to 11pm
+      const minute = Math.floor(Math.random() * 60);
+      const hourStr = hour.toString().padStart(2, '0');
+      const minuteStr = minute.toString().padStart(2, '0');
+      newTimes.add(`${hourStr}:${minuteStr}`);
+    }
+    
+    // Add early morning commit with lower probability (20%)
+    if (Math.random() < 0.2) {
+      const hour = Math.floor(Math.random() * 3) + 6; // 6am to 8am
+      const minute = Math.floor(Math.random() * 60);
+      const hourStr = hour.toString().padStart(2, '0');
+      const minuteStr = minute.toString().padStart(2, '0');
+      newTimes.add(`${hourStr}:${minuteStr}`);
+    }
+    
+    // Add more random times to have variety (3-4 more)
+    const additionalTimes = Math.floor(Math.random() * 2) + 3; // 3-4 additional times
+    for (let i = 0; i < additionalTimes; i++) {
+      // Focus on working hours (9am-10pm) with higher probability
       const hour = Math.floor(Math.random() * 14) + 9; // 9am to 10pm
       const minute = Math.floor(Math.random() * 60);
       const hourStr = hour.toString().padStart(2, '0');
@@ -573,6 +595,8 @@ export default function StreakManagerPage() {
     if (sortedTimes.length > 0) {
       setSelectedBulkTime(sortedTimes[0]);
     }
+    
+    showToast(`Generated ${sortedTimes.length} random commit times`, 'success');
   };
   
   // Function to select a commit message template
@@ -1393,17 +1417,35 @@ export default function StreakManagerPage() {
                       <Button 
                         variant="outline" 
                         size="sm" 
+                        onClick={() => {
+                          if (selectedBulkTime && !bulkTimes.includes(selectedBulkTime)) {
+                            setBulkTimes([...bulkTimes, selectedBulkTime]);
+                            // Clear the input for next time entry
+                            setSelectedBulkTime('');
+                          } else if (selectedBulkTime) {
+                            showToast('This time is already in the list', 'warning');
+                          } else {
+                            showToast('Please enter a time first', 'warning');
+                          }
+                        }}
+                        className="whitespace-nowrap"
+                      >
+                        Add Time
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
                         onClick={generateRandomTimes}
                         className="whitespace-nowrap"
                       >
-                        Generate Random Times
+                        Generate Random
                       </Button>
                     </div>
                     
                     {bulkTimes.length > 0 ? (
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                          <label className="text-xs font-medium">Random Times (will be used randomly for each date)</label>
+                          <label className="text-xs font-medium">Selected Times ({bulkTimes.length})</label>
                           <Button 
                             variant="ghost" 
                             size="sm" 
@@ -1433,12 +1475,16 @@ export default function StreakManagerPage() {
                           ))}
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          These times will be randomly assigned to different dates to make the streak look more natural.
+                          {bulkOperationType === "fix" ? 
+                            "For past dates, each commit will use a randomly selected time from this list." :
+                            "For scheduled commits, each date will use a randomly selected time from this list."}
                         </p>
                       </div>
                     ) : (
                       <p className="text-xs text-muted-foreground mt-2">
-                        Generate random times to make your commit pattern look more natural, or just use the single time above.
+                        {bulkOperationType === "fix" ? 
+                          "Add multiple times to make your past commits look more natural. If none are added, the single time above will be used." :
+                          "Add multiple times to make your scheduled commits look more natural. If none are added, the single time above will be used."}
                       </p>
                     )}
                   </div>
@@ -1514,44 +1560,52 @@ export default function StreakManagerPage() {
             {/* Frequency Selection */}
             <div className="mt-4">
               <label className="text-sm font-medium block mb-2">Frequency</label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 <Button
-                  type="button"
                   variant={bulkCommitFrequency === "daily" ? "default" : "outline"}
-                  className="justify-start"
+                  size="sm"
+                  className="justify-center"
                   onClick={() => setBulkCommitFrequency("daily")}
                 >
                   <Calendar className="mr-2 h-4 w-4" />
                   Daily
                 </Button>
                 <Button
-                  type="button"
                   variant={bulkCommitFrequency === "weekdays" ? "default" : "outline"}
-                  className="justify-start"
+                  size="sm"
+                  className="justify-center"
                   onClick={() => setBulkCommitFrequency("weekdays")}
                 >
-                  <Calendar className="mr-2 h-4 w-4" />
+                  <Briefcase className="mr-2 h-4 w-4" />
                   Weekdays
                 </Button>
                 <Button
-                  type="button"
                   variant={bulkCommitFrequency === "weekends" ? "default" : "outline"}
-                  className="justify-start"
+                  size="sm"
+                  className="justify-center"
                   onClick={() => setBulkCommitFrequency("weekends")}
                 >
-                  <Calendar className="mr-2 h-4 w-4" />
+                  <Coffee className="mr-2 h-4 w-4" />
                   Weekends
                 </Button>
                 <Button
-                  type="button"
                   variant={bulkCommitFrequency === "weekly" ? "default" : "outline"}
-                  className="justify-start"
+                  size="sm"
+                  className="justify-center"
                   onClick={() => setBulkCommitFrequency("weekly")}
                 >
-                  <Calendar className="mr-2 h-4 w-4" />
+                  <CalendarRange className="mr-2 h-4 w-4" />
                   Weekly
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                {bulkOperationType === "fix" ? 
+                  `For past dates, only commits matching the selected frequency (${bulkCommitFrequency}) will be created.` :
+                  `For future dates, commits will be scheduled on ${bulkCommitFrequency === "daily" ? "every day" : 
+                    bulkCommitFrequency === "weekdays" ? "Monday-Friday" : 
+                    bulkCommitFrequency === "weekends" ? "Saturday-Sunday" : 
+                    "the same day each week"}.`}
+              </p>
             </div>
             
             {/* Schedule Summary */}
