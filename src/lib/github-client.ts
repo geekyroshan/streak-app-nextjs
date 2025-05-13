@@ -7,21 +7,26 @@ import {
   NormalizedCacheObject 
 } from '@apollo/client';
 import { onError } from '@apollo/client/link/error';
-import { GitHubError, GitHubRateLimit } from '@/types/github';
+import { GitHubError, GitHubErrorCode, GitHubRateLimit } from '@/types/github';
 
-// Rate limit tracking
-let currentRateLimit: GitHubRateLimit | null = null;
+// Global rate limit tracking
+let rateLimitRemaining: number | null = null;
+let rateLimitLimit: number | null = null;
+let rateLimitReset: number | null = null;
+let rateLimitUsed: number | null = null;
 
 /**
- * Creates an error response object for GitHub API errors
+ * Create a GitHub error object
  */
-export function createGitHubError(message: string, code: string, status?: number): GitHubError {
-  const errorCode = mapGitHubErrorCode(code);
-  
+export function createGitHubError(
+  message: string,
+  code: GitHubErrorCode = 'UNKNOWN_ERROR',
+  status: number = 500
+): GitHubError {
   return {
-    code: errorCode,
     message,
-    status
+    code,
+    status,
   };
 }
 
@@ -62,7 +67,7 @@ export function createGitHubClient(token: string): ApolloClient<NormalizedCacheO
   });
 
   // Error handling link for Apollo
-  const errorLink = onError(({ graphQLErrors, networkError }) => {
+  const errorLink = onError(({ graphQLErrors, networkError, operation, forward }) => {
     if (graphQLErrors) {
       graphQLErrors.forEach(({ message, extensions }) => {
         console.error(
@@ -75,12 +80,13 @@ export function createGitHubClient(token: string): ApolloClient<NormalizedCacheO
     if (networkError) {
       console.error(`[GitHub API Network Error]: ${networkError}`);
     }
+
+    return forward(operation);
   });
 
   // Rate limit tracking link
   const rateLimitLink = new ApolloLink((operation, forward) => {
     return forward(operation).map((response) => {
-      // Check for rate limit headers
       const context = operation.getContext();
       const headers = context.response?.headers;
 
@@ -93,7 +99,10 @@ export function createGitHubClient(token: string): ApolloClient<NormalizedCacheO
         };
 
         // Update our current rate limit tracking
-        currentRateLimit = rateLimit;
+        rateLimitRemaining = rateLimit.remaining;
+        rateLimitLimit = rateLimit.limit;
+        rateLimitReset = rateLimit.reset;
+        rateLimitUsed = rateLimit.used;
       }
 
       return response;
@@ -121,34 +130,55 @@ export function createGitHubClient(token: string): ApolloClient<NormalizedCacheO
  * Get current GitHub API rate limit information
  */
 export function getCurrentRateLimit(): GitHubRateLimit | null {
-  return currentRateLimit;
+  if (rateLimitLimit === null || rateLimitRemaining === null || rateLimitReset === null) {
+    return null;
+  }
+  
+  return {
+    limit: rateLimitLimit,
+    remaining: rateLimitRemaining,
+    reset: rateLimitReset,
+    used: rateLimitUsed ?? 0,
+  };
 }
 
 /**
  * Check if we're approaching rate limit and should use caution
  */
 export function isApproachingRateLimit(): boolean {
-  if (!currentRateLimit) return false;
+  if (rateLimitRemaining === null || rateLimitLimit === null) return false;
   
   // Consider it approaching if less than 10% of requests remain
-  const threshold = Math.floor(currentRateLimit.limit * 0.1);
-  return currentRateLimit.remaining <= threshold;
+  const threshold = Math.floor(rateLimitLimit * 0.1);
+  return rateLimitRemaining <= threshold;
 }
 
 /**
  * Check if we're rate limited and should back off
  */
 export function isRateLimited(): boolean {
-  if (!currentRateLimit) return false;
-  return currentRateLimit.remaining <= 0;
+  if (rateLimitRemaining === null) return false;
+  
+  // If we have 0 remaining requests, check if the reset time has passed
+  if (rateLimitRemaining <= 0) {
+    if (rateLimitReset && Date.now() / 1000 > rateLimitReset) {
+      // Reset time has passed, reset our tracking
+      rateLimitRemaining = null;
+      rateLimitReset = null;
+      return false;
+    }
+    return true;
+  }
+  
+  return false;
 }
 
 /**
  * Get time until rate limit reset in seconds
  */
 export function getTimeUntilReset(): number | null {
-  if (!currentRateLimit) return null;
+  if (rateLimitReset === null) return null;
   
   const now = Math.floor(Date.now() / 1000); // Current time in seconds
-  return Math.max(0, currentRateLimit.reset - now);
+  return Math.max(0, rateLimitReset - now);
 } 

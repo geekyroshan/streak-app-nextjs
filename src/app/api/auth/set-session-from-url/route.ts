@@ -109,6 +109,10 @@ export async function POST(request: Request) {
       if (!userData.github_access_token && existingUser?.github_access_token) {
         console.log('Preserving existing github_access_token');
         userData.github_access_token = existingUser.github_access_token;
+      } else if (userData.github_access_token) {
+        console.log('Storing new github_access_token');
+      } else {
+        console.error('No github_access_token available to store!');
       }
       
       const { error: upsertError } = await supabase.from('users').upsert(

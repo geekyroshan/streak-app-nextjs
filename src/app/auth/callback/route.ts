@@ -38,6 +38,10 @@ export async function GET(request: NextRequest) {
       // Success - Log that we got the session
       console.log('Successfully exchanged code for session', { user: data.session?.user.email });
       
+      // CRITICAL: Log the provider token to verify it's available
+      console.log('Provider token available:', !!data.session?.provider_token);
+      console.log('Provider refresh token available:', !!data.session?.provider_refresh_token);
+      
       // Make sure we have time to create user record before redirecting
       if (data.session?.user) {
         try {
@@ -90,6 +94,10 @@ export async function GET(request: NextRequest) {
           if (!userData.github_access_token && existingUser?.github_access_token) {
             console.log('Preserving existing github_access_token in callback');
             userData.github_access_token = existingUser.github_access_token;
+          } else if (userData.github_access_token) {
+            console.log('Storing new github_access_token in callback');
+          } else {
+            console.error('No github_access_token available to store!');
           }
           
           // Ensure user record exists in the database

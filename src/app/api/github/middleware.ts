@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { headers } from 'next/headers';
 import { createGitHubError, getCurrentRateLimit, isRateLimited } from '@/lib/github-client';
 import { GitHubError } from '@/types/github';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
 
 /**
  * GitHub API error response builder
@@ -14,13 +16,42 @@ export function githubErrorResponse(error: GitHubError, status: number = 500) {
 }
 
 /**
- * Get GitHub token from request or environment
+ * Get GitHub token from request, database, or environment
  */
-export function getGitHubToken(req: NextRequest): string | null {
+export async function getGitHubToken(req: NextRequest): Promise<string | null> {
   // Check authorization header first
   const authHeader = req.headers.get('authorization');
   if (authHeader?.startsWith('Bearer ')) {
     return authHeader.substring(7);
+  }
+  
+  try {
+    // Try to get token from the current user in the database
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+    
+    // Get the current session
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (session?.user) {
+      // Get the user's GitHub token from the database
+      const { data: userData, error } = await supabase
+        .from('users')
+        .select('github_access_token')
+        .eq('auth_id', session.user.id)
+        .single();
+      
+      if (!error && userData?.github_access_token) {
+        console.log('Using GitHub token from database for user:', session.user.email);
+        return userData.github_access_token;
+      } else if (error) {
+        console.error('Error retrieving GitHub token from database:', error);
+      } else {
+        console.warn('No GitHub token found in database for user:', session.user.email);
+      }
+    }
+  } catch (error) {
+    console.error('Error while trying to get GitHub token from database:', error);
   }
   
   // Otherwise try to get from environment
@@ -35,8 +66,8 @@ export async function withGitHubAuth(
   handler: (req: NextRequest, token: string) => Promise<NextResponse>
 ): Promise<NextResponse> {
   try {
-    // Get token from request or environment
-    const token = getGitHubToken(req);
+    // Get token from request, database, or environment
+    const token = await getGitHubToken(req);
     
     if (!token) {
       return githubErrorResponse(

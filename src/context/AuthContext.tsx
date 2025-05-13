@@ -60,6 +60,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('Auth context: User ID in session:', newSession.user.id);
         console.log('Auth context: User email:', newSession.user.email);
         console.log('Auth context: User metadata available:', !!newSession.user.user_metadata);
+        console.log('Auth context: Provider token available:', !!newSession.provider_token);
       }
       
       // Update state with session data
@@ -86,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           
           // Extract GitHub access token
           const githubAccessToken = newSession.provider_token || null;
-          console.log('GitHub access token available:', !!githubAccessToken);
+          console.log('GitHub access token available in context:', !!githubAccessToken);
           
           // Create user object with all required fields including github_username
           const userData = {
@@ -113,6 +114,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!userData.github_access_token && existingUser?.github_access_token) {
             console.log('Preserving existing github_access_token');
             userData.github_access_token = existingUser.github_access_token;
+          } else if (userData.github_access_token) {
+            console.log('Storing new github_access_token in context');
+          } else {
+            console.warn('No github_access_token available in context to store!');
           }
           
           // Upsert user data
@@ -235,6 +240,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         provider: 'github',
         options: {
           redirectTo: `${siteUrl}/auth/callback`,
+          // Request necessary scopes for GitHub API access
           scopes: 'read:user user:email repo',
         },
       });
