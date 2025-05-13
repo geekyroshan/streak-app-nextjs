@@ -10,6 +10,7 @@ interface BulkScheduleBody {
   repoName: string;        // Full repository name (owner/name)
   filePaths: string[];     // Paths to the files to modify
   commitMessageTemplate: string; // Template for commit messages, e.g., "Update docs for {{date}}"
+  commitMessages?: string[]; // Array of message templates to randomly select from
   fileContents: Record<string, string>; // Map of file paths to content
   startDate: string;      // ISO date string for start date 
   endDate: string;        // ISO date string for end date
@@ -194,7 +195,13 @@ export async function POST(request: NextRequest) {
         commitTime = body.times[randomIndex];
       }
       
-      const commitMessage = body.commitMessageTemplate.replace('{{date}}', formattedDate);
+      // Choose a commit message - use the template or random from the array
+      let commitMessage = body.commitMessageTemplate.replace('{{date}}', formattedDate);
+      if (body.commitMessages && body.commitMessages.length > 0) {
+        // Randomly select a message from the provided messages array
+        const randomIndex = Math.floor(Math.random() * body.commitMessages.length);
+        commitMessage = body.commitMessages[randomIndex].replace('{{date}}', formattedDate);
+      }
       
       // Set the time part of the date
       const [hours, minutes] = commitTime.split(':').map(Number);
@@ -226,7 +233,8 @@ export async function POST(request: NextRequest) {
           id: commit.id,
           date: formattedDate,
           time: commitTime,
-          filePath
+          filePath,
+          message: commitMessage
         });
       }
     }
@@ -277,7 +285,13 @@ export async function POST(request: NextRequest) {
           commitTime = body.times[randomIndex];
         }
         
-        const commitMessage = body.commitMessageTemplate.replace('{{date}}', formattedDate);
+        // Choose a commit message - use the template or random from the array
+        let commitMessage = body.commitMessageTemplate.replace('{{date}}', formattedDate);
+        if (body.commitMessages && body.commitMessages.length > 0) {
+          // Randomly select a message from the provided messages array
+          const randomIndex = Math.floor(Math.random() * body.commitMessages.length);
+          commitMessage = body.commitMessages[randomIndex].replace('{{date}}', formattedDate);
+        }
         
         // Set the time part of the date
         const [hours, minutes] = commitTime.split(':').map(Number);
@@ -379,7 +393,8 @@ export async function POST(request: NextRequest) {
                 date: formattedDate,
                 time: commitTime,
                 filePath,
-                commitSha: commit.sha
+                commitSha: commit.sha,
+                message: commitMessage
               });
               
             } catch (error) {

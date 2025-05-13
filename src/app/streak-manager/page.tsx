@@ -123,6 +123,7 @@ export default function StreakManagerPage() {
   ]);
   const [repositoryFiles, setRepositoryFiles] = useState<string[]>([]);
   const [fileSearchQuery, setFileSearchQuery] = useState<string>("");
+  const [bulkCommitMessages, setBulkCommitMessages] = useState<string[]>([]);
 
   // Fetch repositories when component mounts
   useEffect(() => {
@@ -601,14 +602,21 @@ export default function StreakManagerPage() {
   
   // Function to select a commit message template
   const selectCommitMessage = (message: string) => {
-    setBulkCommitMessageTemplate(message + " for {{date}}");
+    const formattedMessage = message + " for {{date}}";
+    if (!bulkCommitMessages.includes(formattedMessage)) {
+      setBulkCommitMessages([...bulkCommitMessages, formattedMessage]);
+    } else {
+      // Set it as the current template for editing
+      setBulkCommitMessageTemplate(formattedMessage);
+    }
   };
 
   // Function to handle bulk operation execution
   const handleExecuteBulkOperation = async () => {
     try {
       // Validate required fields
-      if (!selectedRepository || !bulkStartDate || !bulkEndDate || !bulkCommitMessageTemplate || bulkSelectedFiles.length === 0) {
+      const hasCommitMessages = bulkCommitMessageTemplate || bulkCommitMessages.length > 0;
+      if (!selectedRepository || !bulkStartDate || !bulkEndDate || !hasCommitMessages || bulkSelectedFiles.length === 0) {
         showToast('Please fill out all required fields', 'error');
         return;
       }
@@ -649,12 +657,18 @@ export default function StreakManagerPage() {
         const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
         setSelectedBulkTime(timeStr);
       }
+
+      // Prepare messages array - use the template if no messages array, otherwise use the array
+      const commitMessages = bulkCommitMessages.length > 0 
+        ? bulkCommitMessages 
+        : bulkCommitMessageTemplate ? [bulkCommitMessageTemplate] : [];
       
       // Prepare payload for bulk scheduling
       const payload = {
         repoName: selectedRepository,
         filePaths: bulkSelectedFiles,
         commitMessageTemplate: bulkCommitMessageTemplate,
+        commitMessages: commitMessages,
         fileContents,
         startDate: bulkStartDate,
         endDate: bulkEndDate,
@@ -682,16 +696,37 @@ export default function StreakManagerPage() {
       
       const data = await response.json();
       
+      // Update recent commits if there were executed commits for past dates
+      if (data.data.executedCommits && data.data.executedCommits.length > 0) {
+        // Add executed commits to recentCommits
+        const newRecentCommits = data.data.executedCommits.map((commit: any) => ({
+          id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+          repoName: selectedRepository,
+          date: commit.date,
+          time: commit.time,
+          commitMessage: commit.message || 'Bulk commit',
+          commitSha: commit.commitSha
+        }));
+        
+        setRecentCommits(prev => [...newRecentCommits, ...prev].slice(0, 10)); // Keep only the 10 most recent
+      }
+      
       // Show success message
       showToast(`Successfully processed ${data.data.totalScheduled + data.data.totalExecuted} commits (${data.data.totalScheduled} scheduled, ${data.data.totalExecuted} executed)`, 'success');
       
       // Reset form
       setBulkSelectedFiles([]);
       setBulkCommitMessageTemplate('');
+      setBulkCommitMessages([]);
       
-      // Switch to schedule tab to see the scheduled commits
-      setActiveTab("schedule-commits");
-      fetchScheduledCommits();
+      // If we have executed commits, switch to fix-missed-days tab to see them
+      // Otherwise switch to schedule tab to see the scheduled commits
+      if (data.data.totalExecuted > 0) {
+        setActiveTab("fix-missed-days");
+      } else {
+        setActiveTab("schedule-commits");
+        fetchScheduledCommits();
+      }
       
     } catch (error) {
       console.error('Error executing bulk operation:', error);
@@ -859,6 +894,33 @@ export default function StreakManagerPage() {
         ))}
       </div>
     );
+  };
+
+  // Function to format time with AM/PM
+  const formatTimeWithAMPM = (time: string): string => {
+    if (!time) return '';
+    const [hours, minutes] = time.split(':').map(Number);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const formattedHours = hours % 12 || 12; // Convert 0 to 12 for 12 AM
+    return `${formattedHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+  };
+
+  // Function to convert time with AM/PM to 24-hour format
+  const convertTo24Hour = (timeWithAMPM: string): string => {
+    const match = timeWithAMPM.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!match) return timeWithAMPM; // Return as is if format doesn't match
+    
+    let [, hours, minutes, period] = match;
+    let hoursNum = parseInt(hours, 10);
+    
+    // Convert to 24-hour format
+    if (period.toUpperCase() === 'PM' && hoursNum < 12) {
+      hoursNum += 12;
+    } else if (period.toUpperCase() === 'AM' && hoursNum === 12) {
+      hoursNum = 0;
+    }
+    
+    return `${hoursNum.toString().padStart(2, '0')}:${minutes}`;
   };
 
   return (
@@ -1420,12 +1482,11 @@ export default function StreakManagerPage() {
                         onClick={() => {
                           if (selectedBulkTime && !bulkTimes.includes(selectedBulkTime)) {
                             setBulkTimes([...bulkTimes, selectedBulkTime]);
-                            // Clear the input for next time entry
-                            setSelectedBulkTime('');
+                            setSelectedBulkTime(''); // Clear for next entry
                           } else if (selectedBulkTime) {
                             showToast('This time is already in the list', 'warning');
                           } else {
-                            showToast('Please enter a time first', 'warning');
+                            showToast('Please select a time first', 'warning');
                           }
                         }}
                         className="whitespace-nowrap"
@@ -1442,8 +1503,8 @@ export default function StreakManagerPage() {
                       </Button>
                     </div>
                     
-                    {bulkTimes.length > 0 ? (
-                      <div className="space-y-2">
+                    {bulkTimes.length > 0 && (
+                      <div className="space-y-2 mt-2">
                         <div className="flex items-center justify-between">
                           <label className="text-xs font-medium">Selected Times ({bulkTimes.length})</label>
                           <Button 
@@ -1458,7 +1519,7 @@ export default function StreakManagerPage() {
                         <div className="flex flex-wrap gap-2 mt-2">
                           {bulkTimes.map((time, index) => (
                             <div key={index} className="flex items-center gap-1 bg-muted rounded-md px-2 py-1">
-                              <span className="text-xs">{time}</span>
+                              <span className="text-xs">{formatTimeWithAMPM(time)}</span>
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1480,29 +1541,89 @@ export default function StreakManagerPage() {
                             "For scheduled commits, each date will use a randomly selected time from this list."}
                         </p>
                       </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground mt-2">
-                        {bulkOperationType === "fix" ? 
-                          "Add multiple times to make your past commits look more natural. If none are added, the single time above will be used." :
-                          "Add multiple times to make your scheduled commits look more natural. If none are added, the single time above will be used."}
-                      </p>
                     )}
                   </div>
                   
                   <div>
                     <label className="text-sm font-medium block mb-2">Commit Message Template</label>
-                    <Textarea 
-                      placeholder="Update documentation for {{date}}"
-                      className="w-full"
-                      value={bulkCommitMessageTemplate}
-                      onChange={(e) => setBulkCommitMessageTemplate(e.target.value)}
-                    />
+                    <div className="flex gap-2 mb-2">
+                      <Textarea 
+                        placeholder="Update documentation for {{date}}"
+                        className="w-full"
+                        value={bulkCommitMessageTemplate}
+                        onChange={(e) => setBulkCommitMessageTemplate(e.target.value)}
+                      />
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => {
+                          if (bulkCommitMessageTemplate && !bulkCommitMessages.includes(bulkCommitMessageTemplate)) {
+                            setBulkCommitMessages([...bulkCommitMessages, bulkCommitMessageTemplate]);
+                            // Clear the input for next message entry
+                            setBulkCommitMessageTemplate('');
+                          } else if (bulkCommitMessageTemplate) {
+                            showToast('This message is already in the list', 'warning');
+                          } else {
+                            showToast('Please enter a message first', 'warning');
+                          }
+                        }}
+                        className="whitespace-nowrap"
+                      >
+                        Add Message
+                      </Button>
+                    </div>
                     <p className="text-xs text-muted-foreground mt-1">
                       Use {"{{date}}"} to include the date in your message
                     </p>
                     
+                    {bulkCommitMessages.length > 0 ? (
+                      <div className="space-y-2 mt-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-medium">Selected Messages ({bulkCommitMessages.length})</label>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-6 text-xs"
+                            onClick={() => setBulkCommitMessages([])}
+                          >
+                            Clear All
+                          </Button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {bulkCommitMessages.map((message, index) => (
+                            <div key={index} className="flex items-center gap-1 bg-muted rounded-md px-2 py-1 max-w-full">
+                              <span className="text-xs truncate">{message}</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive flex-shrink-0"
+                                onClick={() => {
+                                  const newMessages = [...bulkCommitMessages];
+                                  newMessages.splice(index, 1);
+                                  setBulkCommitMessages(newMessages);
+                                }}
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {bulkOperationType === "fix" ? 
+                            "For past dates, each commit will use a randomly selected message from this list." :
+                            "For scheduled commits, each date will use a randomly selected message from this list."}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        {bulkOperationType === "fix" ? 
+                          "For past dates, each commit will use a randomly selected message from this list." :
+                          "For scheduled commits, each date will use a randomly selected message from this list."}
+                      </p>
+                    )}
+                    
                     <div className="mt-2">
-                      <label className="text-xs font-medium block mb-1">Common Messages:</label>
+                      <label className="text-sm font-medium block mb-1">Common Messages:</label>
                       <div className="flex flex-wrap gap-2">
                         {commonCommitMessages.map((message, index) => (
                           <Button
