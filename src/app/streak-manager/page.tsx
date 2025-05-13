@@ -705,7 +705,8 @@ export default function StreakManagerPage() {
           date: commit.date,
           time: commit.time,
           commitMessage: commit.message || 'Bulk commit',
-          commitSha: commit.commitSha
+          commitSha: commit.commitSha,
+          commitUrl: commit.commitUrl // Include the commitUrl from the API response
         }));
         
         setRecentCommits(prev => [...newRecentCommits, ...prev].slice(0, 10)); // Keep only the 10 most recent
