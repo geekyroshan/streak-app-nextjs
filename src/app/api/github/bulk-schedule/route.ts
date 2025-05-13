@@ -272,25 +272,33 @@ export async function POST(request: NextRequest) {
       // Sort past dates from oldest to newest for chronological commits
       pastDates.sort((a, b) => a.getTime() - b.getTime());
       
+      // Create a copy of the times and messages arrays for rotation
+      let availableTimes = [...(body.times || [])];
+      let availableMessages = [...(body.commitMessages || [])];
+      
       // Process each past date
       for (const commitDate of pastDates) {
         // Format date for commit message template
         const formattedDate = commitDate.toISOString().split('T')[0];
         
-        // Choose a commit time - use the specified time or random from the array
+        // Choose a commit time - use the specified time or rotate through the array
         let commitTime = body.timeOfDay;
-        if (body.times && body.times.length > 0) {
-          // Randomly select a time from the provided times array
-          const randomIndex = Math.floor(Math.random() * body.times.length);
-          commitTime = body.times[randomIndex];
+        if (availableTimes.length > 0) {
+          // Take the first time from the available times
+          commitTime = availableTimes.shift() as string;
+          // Put it back at the end for rotation if we run out of times
+          availableTimes.push(commitTime);
         }
         
-        // Choose a commit message - use the template or random from the array
+        // Choose a commit message - use the template or rotate through the array
         let commitMessage = body.commitMessageTemplate.replace('{{date}}', formattedDate);
-        if (body.commitMessages && body.commitMessages.length > 0) {
-          // Randomly select a message from the provided messages array
-          const randomIndex = Math.floor(Math.random() * body.commitMessages.length);
-          commitMessage = body.commitMessages[randomIndex].replace('{{date}}', formattedDate);
+        if (availableMessages.length > 0) {
+          // Take the first message from the available messages
+          commitMessage = availableMessages.shift() as string;
+          // Replace the date placeholder
+          commitMessage = commitMessage.replace('{{date}}', formattedDate);
+          // Put it back at the end for rotation if we run out of messages
+          availableMessages.push(commitMessage);
         }
         
         // Set the time part of the date

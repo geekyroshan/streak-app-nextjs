@@ -667,7 +667,7 @@ export default function StreakManagerPage() {
       const payload = {
         repoName: selectedRepository,
         filePaths: bulkSelectedFiles,
-        commitMessageTemplate: bulkCommitMessageTemplate,
+        commitMessageTemplate: bulkCommitMessages.length > 0 ? bulkCommitMessages[0] : bulkCommitMessageTemplate,
         commitMessages: commitMessages,
         fileContents,
         startDate: bulkStartDate,
@@ -941,9 +941,9 @@ export default function StreakManagerPage() {
 
       <Tabs defaultValue="fix-missed-days" value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="w-full mb-6 bg-background border border-border">
-          <TabsTrigger value="fix-missed-days" className="flex-1">Fix Missed Days</TabsTrigger>
-          <TabsTrigger value="schedule-commits" className="flex-1">Schedule Commits</TabsTrigger>
-          <TabsTrigger value="bulk-operations" className="flex-1">Bulk Operations</TabsTrigger>
+          <TabsTrigger value="fix-missed-days" className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white">Fix Missed Days</TabsTrigger>
+          <TabsTrigger value="schedule-commits" className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white">Schedule Commits</TabsTrigger>
+          <TabsTrigger value="bulk-operations" className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white">Bulk Operations</TabsTrigger>
         </TabsList>
         
         {/* Fix Missed Days Tab */}
