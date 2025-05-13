@@ -939,10 +939,34 @@ export default function StreakManagerPage() {
       </div>
 
       <Tabs defaultValue="fix-missed-days" value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="w-full mb-6 bg-background border border-border">
-          <TabsTrigger value="fix-missed-days" className="flex-1">Fix Missed Days</TabsTrigger>
-          <TabsTrigger value="schedule-commits" className="flex-1">Schedule Commits</TabsTrigger>
-          <TabsTrigger value="bulk-operations" className="flex-1">Bulk Operations</TabsTrigger>
+        <TabsList className="w-full mb-6 grid grid-cols-3 bg-background border border-border p-1">
+          <TabsTrigger 
+            value="fix-missed-days" 
+            className={cn(
+              "flex-1 py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
+              "data-[state=active]:shadow-sm transition-all duration-200"
+            )}
+          >
+            Fix Missed Days
+          </TabsTrigger>
+          <TabsTrigger 
+            value="schedule-commits" 
+            className={cn(
+              "flex-1 py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
+              "data-[state=active]:shadow-sm transition-all duration-200"
+            )}
+          >
+            Schedule Commits
+          </TabsTrigger>
+          <TabsTrigger 
+            value="bulk-operations" 
+            className={cn(
+              "flex-1 py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
+              "data-[state=active]:shadow-sm transition-all duration-200"
+            )}
+          >
+            Bulk Operations
+          </TabsTrigger>
         </TabsList>
         
         {/* Fix Missed Days Tab */}
@@ -1729,11 +1753,15 @@ export default function StreakManagerPage() {
               </p>
             </div>
             
-            {/* Schedule Summary */}
+            {/* Bulk Commit Preview or Schedule Summary based on operation type */}
             <Card className="mt-6">
               <CardHeader>
-                <CardTitle>Schedule Summary</CardTitle>
-                <CardDescription>Verify details before scheduling</CardDescription>
+                <CardTitle>{bulkOperationType === "fix" ? "Bulk Commit Preview" : "Schedule Summary"}</CardTitle>
+                <CardDescription>
+                  {bulkOperationType === "fix" 
+                    ? "Verify details before executing immediate commits for past dates" 
+                    : "Verify details before scheduling"}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1742,31 +1770,55 @@ export default function StreakManagerPage() {
                     <p className="text-sm text-muted-foreground mb-3">{selectedRepository || "Not selected"}</p>
                     
                     <h4 className="text-sm font-medium mb-1">Date Range:</h4>
-                    <p className="text-sm text-muted-foreground mb-3">{bulkStartDate || "Not selected"}</p>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {bulkStartDate && bulkEndDate ? `${bulkStartDate} to ${bulkEndDate}` : "Not selected"}
+                    </p>
+
+                    <h4 className="text-sm font-medium mb-1">Frequency:</h4>
+                    <p className="text-sm text-muted-foreground mb-3">{bulkCommitFrequency}</p>
                   </div>
                   <div>
-                    <h4 className="text-sm font-medium mb-1">Scheduled For:</h4>
+                    <h4 className="text-sm font-medium mb-1">{bulkOperationType === "fix" ? "Commits For:" : "Scheduled For:"}</h4>
                     <p className="text-sm text-muted-foreground mb-3">
                       {bulkStartDate && bulkEndDate ? `${bulkStartDate} to ${bulkEndDate}` : "Not scheduled"}
                     </p>
                     
                     <h4 className="text-sm font-medium mb-1">Files:</h4>
-                    <p className="text-sm text-muted-foreground">{bulkSelectedFiles.length > 0 ? bulkSelectedFiles.join(', ') : "No files selected"}</p>
+                    <p className="text-sm text-muted-foreground">{bulkSelectedFiles.length > 0 ? `${bulkSelectedFiles.length} files selected` : "No files selected"}</p>
                   </div>
                 </div>
                 
                 <div className="mt-4 border-t border-border pt-4">
                   <p className="text-sm text-muted-foreground mb-3">
-                    This will schedule commits to happen automatically on the specified dates.
+                    {bulkOperationType === "fix" 
+                      ? "This will immediately create commits for past dates based on your settings. These commits will appear in your contribution graph."
+                      : "This will schedule commits to happen automatically on the specified dates."}
                   </p>
-                  {(!selectedRepository || !bulkStartDate || !bulkEndDate || !bulkCommitMessageTemplate || bulkSelectedFiles.length === 0) && (
+                  
+                  {bulkOperationType === "fix" && (
+                    <div className="p-3 mb-3 bg-amber-500/10 border border-amber-500/30 rounded-md">
+                      <div className="flex gap-2 text-amber-600 dark:text-amber-400">
+                        <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                        <p className="text-sm">
+                          Use this feature responsibly to reflect actual work you've done. Excessive backdating may violate GitHub's terms of service.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {(!selectedRepository || !bulkStartDate || !bulkEndDate || 
+                    !(bulkCommitMessageTemplate || bulkCommitMessages.length > 0) || 
+                    bulkSelectedFiles.length === 0) && (
                     <div className="text-amber-500 text-sm mb-3">
                       Please complete all fields
                     </div>
                   )}
+                  
                   <Button 
                     className="w-full"
-                    disabled={!selectedRepository || !bulkStartDate || !bulkEndDate || !bulkCommitMessageTemplate || bulkSelectedFiles.length === 0 || bulkLoading}
+                    disabled={!selectedRepository || !bulkStartDate || !bulkEndDate || 
+                      !(bulkCommitMessageTemplate || bulkCommitMessages.length > 0) || 
+                      bulkSelectedFiles.length === 0 || bulkLoading}
                     onClick={handleExecuteBulkOperation}
                   >
                     {bulkLoading ? (
@@ -1774,7 +1826,7 @@ export default function StreakManagerPage() {
                         <span className="animate-spin h-4 w-4 mr-2 border-t-2 border-b-2 border-primary-foreground rounded-full"></span>
                         Processing...
                       </span>
-                    ) : "Execute Bulk Operation"}
+                    ) : bulkOperationType === "fix" ? "Execute Bulk Commits" : "Schedule Bulk Commits"}
                   </Button>
               </div>
             </CardContent>

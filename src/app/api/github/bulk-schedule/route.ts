@@ -305,35 +305,14 @@ export async function POST(request: NextRequest) {
             commit_sha: latestCommitSha
           });
           
-          // For each file, create a commit
+          // Create a tree with all files in a single commit
+          const treeItems = [];
+          
+          // Process all files at once for this date
           for (const filePath of body.filePaths) {
             const fileContent = body.fileContents[filePath] || '';
             
             try {
-              // Check if the file already exists
-              let blobSha;
-              try {
-                const { data: content } = await octokit.repos.getContent({
-                  owner,
-                  repo,
-                  path: filePath,
-                  ref: defaultBranch
-                });
-                
-                // If content is an array, it means filePath is a directory
-                if (Array.isArray(content)) {
-                  throw new Error(`${filePath} is a directory, not a file`);
-                }
-                
-                // File exists, get its blob SHA
-                blobSha = content.sha;
-              } catch (error: any) {
-                if (error.status !== 404) {
-                  throw error;
-                }
-                // File doesn't exist yet, we'll create it
-              }
-              
               // Create a new blob for the file content
               const { data: blob } = await octokit.git.createBlob({
                 owner,
@@ -342,65 +321,68 @@ export async function POST(request: NextRequest) {
                 encoding: 'base64'
               });
               
-              // Create a new tree with the updated file
-              const { data: tree } = await octokit.git.createTree({
-                owner,
-                repo,
-                base_tree: latestCommit.tree.sha,
-                tree: [
-                  {
-                    path: filePath,
-                    mode: '100644', // Normal file mode
-                    type: 'blob',
-                    sha: blob.sha
-                  }
-                ]
+              // Add the file to the tree items
+              treeItems.push({
+                path: filePath,
+                mode: '100644' as const, // Normal file mode
+                type: 'blob' as const,
+                sha: blob.sha
               });
-              
-              // Create a new commit with the backdate
-              const { data: commit } = await octokit.git.createCommit({
-                owner,
-                repo,
-                message: commitMessage,
-                tree: tree.sha,
-                parents: [latestCommitSha],
-                author: {
-                  name: userData.github_username || 'GitHub User',
-                  email: `${userData.github_username || 'user'}@users.noreply.github.com`,
-                  date: commitDate.toISOString()
-                },
-                committer: {
-                  name: userData.github_username || 'GitHub User',
-                  email: `${userData.github_username || 'user'}@users.noreply.github.com`,
-                  date: commitDate.toISOString()
-                }
-              });
-              
-              // Update the reference
-              await octokit.git.updateRef({
-                owner,
-                repo,
-                ref: `heads/${defaultBranch}`,
-                sha: commit.sha,
-                force: true // Use force to ensure the ref is updated regardless of conflicts
-              });
-              
-              // Update latestCommitSha to the new commit SHA for the next iteration
-              latestCommitSha = commit.sha;
-              
-              // Record the successful commit
-              executedCommits.push({
-                date: formattedDate,
-                time: commitTime,
-                filePath,
-                commitSha: commit.sha,
-                message: commitMessage
-              });
-              
             } catch (error) {
-              console.error(`Error creating commit for ${filePath} on ${formattedDate}:`, error);
+              console.error(`Error creating blob for ${filePath}:`, error);
               // Continue with other files
             }
+          }
+          
+          // Only proceed if we have files to commit
+          if (treeItems.length > 0) {
+            // Create a new tree with all updated files
+            const { data: tree } = await octokit.git.createTree({
+              owner,
+              repo,
+              base_tree: latestCommit.tree.sha,
+              tree: treeItems
+            });
+            
+            // Create a new commit with the backdate
+            const { data: commit } = await octokit.git.createCommit({
+              owner,
+              repo,
+              message: commitMessage,
+              tree: tree.sha,
+              parents: [latestCommitSha],
+              author: {
+                name: userData.github_username || 'GitHub User',
+                email: `${userData.github_username || 'user'}@users.noreply.github.com`,
+                date: commitDate.toISOString()
+              },
+              committer: {
+                name: userData.github_username || 'GitHub User',
+                email: `${userData.github_username || 'user'}@users.noreply.github.com`,
+                date: commitDate.toISOString()
+              }
+            });
+            
+            // Update the reference
+            await octokit.git.updateRef({
+              owner,
+              repo,
+              ref: `heads/${defaultBranch}`,
+              sha: commit.sha,
+              force: true // Use force to ensure the ref is updated regardless of conflicts
+            });
+            
+            // Update latestCommitSha to the new commit SHA for the next iteration
+            latestCommitSha = commit.sha;
+            
+            // Record the successful commit
+            executedCommits.push({
+              date: formattedDate,
+              time: commitTime,
+              filePaths: body.filePaths,
+              commitSha: commit.sha,
+              message: commitMessage
+            });
           }
         } catch (error) {
           console.error(`Error processing date ${formattedDate}:`, error);
