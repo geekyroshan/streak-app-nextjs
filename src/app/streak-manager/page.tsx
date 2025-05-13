@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Calendar, Clock, GitBranch, MessageSquarePlus, CalendarDays, FileEdit, GitCommit, AlertCircle, RefreshCw, X, FileText } from 'lucide-react';
+import { Calendar, Clock, GitBranch, MessageSquarePlus, CalendarDays, FileEdit, GitCommit, AlertCircle, RefreshCw, X, FileText, Folder } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
@@ -61,6 +61,9 @@ const ToastContainer = () => {
     </div>
   );
 };
+
+// Add a FileFolderIcon component since we need a folder icon
+const FileFolderIcon = Folder;
 
 export default function StreakManagerPage() {
   const [activeTab, setActiveTab] = useState("fix-missed-days");
@@ -175,29 +178,27 @@ export default function StreakManagerPage() {
   };
 
   // Function to fetch files from a repository
-  const fetchFiles = async (repoName: string, path: string) => {
+  const fetchFiles = async (repoName: string, path: string = '') => {
     try {
-      setLoading(prev => ({ ...prev, files: true }));
-      setError(null);
-      
-      console.log('Fetching files:', { repoName, path });
-      
+      setLoading(prevState => ({ ...prevState, files: true }));
       const response = await fetch(`/api/github/files?repoName=${encodeURIComponent(repoName)}&path=${encodeURIComponent(path)}`);
       
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch files');
+        throw new Error('Failed to fetch repository files');
       }
       
       const data = await response.json();
-      setFiles(data.files);
-      setCurrentPath(data.currentPath);
+      setFiles(data.files || []);
+      setCurrentPath(data.currentPath || '');
     } catch (error) {
-      console.error('Error fetching files:', error);
-      setError(error instanceof Error ? error.message : 'Failed to fetch files');
-      showToast('Failed to fetch repository files', 'error');
+      console.error('Error fetching repository files:', error);
+      showToast(
+        error instanceof Error ? error.message : 'Failed to fetch repository files',
+        'error'
+      );
+      setFiles([]);
     } finally {
-      setLoading(prev => ({ ...prev, files: false }));
+      setLoading(prevState => ({ ...prevState, files: false }));
     }
   };
 
@@ -648,58 +649,39 @@ export default function StreakManagerPage() {
     }
   };
 
-  // Update the fetchRepositoryFiles function to properly set loading state
-  const fetchRepositoryFiles = async (repoName: string) => {
-    try {
-      setLoading(prevState => ({ ...prevState, files: true }));
-      const response = await fetch(`/api/github/repository-files?repoName=${encodeURIComponent(repoName)}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch repository files');
+  // Update the handleFileSelect function to use the correct endpoint
+  const handleFileSelect = async (file: RepoFile) => {
+    if (file.isDirectory) {
+      // If it's a directory, navigate into it
+      fetchFiles(selectedRepository!, file.path);
+    } else {
+      try {
+        setSelectedFile(file.path);
+        setLoading(prevState => ({ ...prevState, content: true }));
+        
+        // Fetch file content
+        const response = await fetch(`/api/github/file-content?repoName=${encodeURIComponent(selectedRepository || '')}&path=${encodeURIComponent(file.path)}`);
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch file content');
+        }
+        
+        const data = await response.json();
+        setFileContent(data.content || '');
+      } catch (error) {
+        console.error('Error fetching file content:', error);
+        showToast(
+          error instanceof Error ? error.message : 'Failed to fetch file content',
+          'error'
+        );
+        setFileContent('');
+      } finally {
+        setLoading(prevState => ({ ...prevState, content: false }));
       }
-      
-      const data = await response.json();
-      setRepositoryFiles(data.files || []);
-    } catch (error) {
-      console.error('Error fetching repository files:', error);
-      showToast(
-        error instanceof Error ? error.message : 'Failed to fetch repository files',
-        'error'
-      );
-      setRepositoryFiles([]);
-    } finally {
-      setLoading(prevState => ({ ...prevState, files: false }));
     }
   };
 
-  // Update the handleFileSelect function to properly set loading state and handle null
-  const handleFileSelect = async (filePath: string) => {
-    try {
-      setSelectedFile(filePath);
-      setLoading(prevState => ({ ...prevState, content: true }));
-      
-      // Fetch file content
-      const response = await fetch(`/api/github/file-content?repoName=${encodeURIComponent(selectedRepository || '')}&path=${encodeURIComponent(filePath)}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch file content');
-      }
-      
-      const data = await response.json();
-      setFileContent(data.content || '');
-    } catch (error) {
-      console.error('Error fetching file content:', error);
-      showToast(
-        error instanceof Error ? error.message : 'Failed to fetch file content',
-        'error'
-      );
-      setFileContent('');
-    } finally {
-      setLoading(prevState => ({ ...prevState, content: false }));
-    }
-  };
-
-  // Add this function to render file selection UI
+  // Fix the renderFileSelection function to display files properly
   const renderFileSelection = () => {
     return (
       <div className="space-y-3">
@@ -713,7 +695,7 @@ export default function StreakManagerPage() {
           <Button 
             variant="outline" 
             size="icon" 
-            onClick={() => selectedRepository && fetchRepositoryFiles(selectedRepository)}
+            onClick={() => selectedRepository && fetchFiles(selectedRepository, currentPath)}
             disabled={!selectedRepository}
           >
             <RefreshCw className="h-4 w-4" />
@@ -721,19 +703,23 @@ export default function StreakManagerPage() {
         </div>
         
         <div className="max-h-60 overflow-y-auto border rounded-md">
-          {repositoryFiles.length === 0 ? (
+          {files.length === 0 ? (
             <div className="p-4 text-center text-muted-foreground">
-              {loading ? 'Loading files...' : 'No files found. Select a repository and click refresh.'}
+              {loading.files ? 'Loading files...' : 'No files found. Select a repository and click refresh.'}
             </div>
           ) : (
             <ul className="divide-y">
-              {repositoryFiles
-                .filter(file => !fileSearchQuery || file.toLowerCase().includes(fileSearchQuery.toLowerCase()))
+              {files
+                .filter(file => !fileSearchQuery || file.name.toLowerCase().includes(fileSearchQuery.toLowerCase()))
                 .map((file, index) => (
                   <li key={index} className="px-3 py-2 hover:bg-muted cursor-pointer" onClick={() => handleFileSelect(file)}>
                     <div className="flex items-center">
-                      <FileText className="h-4 w-4 mr-2 text-muted-foreground" />
-                      <span className="text-sm truncate">{file}</span>
+                      {file.isDirectory ? (
+                        <FileFolderIcon className="h-4 w-4 mr-2 text-muted-foreground" />
+                      ) : (
+                        <FileText className="h-4 w-4 mr-2 text-muted-foreground" />
+                      )}
+                      <span className="text-sm truncate">{file.name}</span>
                     </div>
                   </li>
                 ))}
@@ -771,12 +757,14 @@ export default function StreakManagerPage() {
     );
   };
 
-  // Update the useEffect for repository selection to also fetch files
-  useEffect(() => {
-    if (selectedRepository) {
-      fetchRepositoryFiles(selectedRepository);
-    }
-  }, [selectedRepository]);
+  // Update the repository selection handler
+  const handleRepositorySelect = (repoName: string) => {
+    setSelectedRepository(repoName);
+    setSelectedFile('');
+    setFileContent('');
+    setCurrentPath('');
+    fetchFiles(repoName);
+  };
 
   // Loading repositories state
   const renderRepositories = () => {
@@ -803,7 +791,7 @@ export default function StreakManagerPage() {
             key={repo.fullName}
             variant={selectedRepository === repo.fullName ? "default" : "outline"}
             className="h-auto py-6 flex flex-col items-center justify-center gap-2 text-left"
-            onClick={() => setSelectedRepository(repo.fullName)}
+            onClick={() => handleRepositorySelect(repo.fullName)}
           >
             <div className={`flex items-center justify-center w-12 h-12 rounded-full ${
               selectedRepository === repo.fullName ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
@@ -845,8 +833,8 @@ export default function StreakManagerPage() {
           <div>
             <h2 className="text-xl font-semibold mb-4">Fix Missed Contribution</h2>
             <p className="text-muted-foreground mb-4">Create a legitimate commit for a day when local work wasn't pushed</p>
-            
-            {/* Repository selection */}
+      
+      {/* Repository selection */}
             <div className="mb-6">
               <h3 className="text-lg font-medium mb-3">Select Repository</h3>
               {renderRepositories()}
@@ -926,7 +914,7 @@ export default function StreakManagerPage() {
                 </Card>
                 
                 {/* File Selection */}
-                <Card>
+        <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <FileEdit className="h-5 w-5 text-primary" />
@@ -948,11 +936,11 @@ export default function StreakManagerPage() {
             
             {/* Verification panel */}
             <Card className="mt-6">
-              <CardHeader>
+          <CardHeader>
                 <CardTitle>Verification</CardTitle>
                 <CardDescription>Check details before creating commit</CardDescription>
-              </CardHeader>
-              <CardContent>
+          </CardHeader>
+          <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <h4 className="text-sm font-medium mb-1">Repository</h4>
@@ -1001,7 +989,7 @@ export default function StreakManagerPage() {
                         Processing...
                       </span>
                     ) : "Create Backdated Commit"}
-                  </Button>
+              </Button>
                 </div>
               </CardContent>
             </Card>
@@ -1066,16 +1054,16 @@ export default function StreakManagerPage() {
                     key={repo.fullName}
                     variant={selectedRepository === repo.fullName ? "default" : "outline"}
                     className="h-auto py-6 flex flex-col items-center justify-center gap-2 text-left"
-                    onClick={() => setSelectedRepository(repo.fullName)}
+                    onClick={() => handleRepositorySelect(repo.fullName)}
                   >
                     <div className={`flex items-center justify-center w-12 h-12 rounded-full ${
                       selectedRepository === repo.fullName ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
                     } mb-2`}>
-                      <GitBranch className="w-6 h-6" />
-                    </div>
+                  <GitBranch className="w-6 h-6" />
+                </div>
                     <div className="font-medium">{repo.name}</div>
                     <div className="text-xs text-muted-foreground">Last commit {repo.lastUpdatedText}</div>
-                  </Button>
+              </Button>
                 ))}
               </div>
             </div>
@@ -1102,9 +1090,9 @@ export default function StreakManagerPage() {
                     />
                     <div className="text-xs text-muted-foreground mt-2">
                       Saturday
-                    </div>
-                  </CardContent>
-                </Card>
+            </div>
+          </CardContent>
+        </Card>
                 
                 {/* Time Selection */}
                 <Card>
@@ -1124,8 +1112,8 @@ export default function StreakManagerPage() {
                     />
                   </CardContent>
                 </Card>
-              </div>
-              
+      </div>
+      
               {/* Right column */}
               <div className="space-y-6">
                 {/* Commit Message */}
@@ -1148,7 +1136,7 @@ export default function StreakManagerPage() {
                 </Card>
                 
                 {/* Files to Change */}
-                <Card>
+          <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <FileEdit className="h-5 w-5 text-primary" />
@@ -1170,11 +1158,11 @@ export default function StreakManagerPage() {
             
             {/* Schedule Summary */}
             <Card className="mt-6">
-              <CardHeader>
+            <CardHeader>
                 <CardTitle>Schedule Summary</CardTitle>
                 <CardDescription>Verify details before scheduling</CardDescription>
-              </CardHeader>
-              <CardContent>
+            </CardHeader>
+            <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <h4 className="text-sm font-medium mb-1">Repository:</h4>
@@ -1191,7 +1179,7 @@ export default function StreakManagerPage() {
                     
                     <h4 className="text-sm font-medium mb-1">Files:</h4>
                     <p className="text-sm text-muted-foreground">{selectedFile || "No files selected"}</p>
-                  </div>
+                </div>
                 </div>
                 
                 <div className="mt-4 border-t border-border pt-4">
@@ -1318,7 +1306,7 @@ export default function StreakManagerPage() {
                       key={repo.fullName}
                       variant={selectedRepository === repo.fullName ? "default" : "outline"}
                       className="h-auto py-6 flex flex-col items-center justify-center gap-2 text-left"
-                      onClick={() => setSelectedRepository(repo.fullName)}
+                      onClick={() => handleRepositorySelect(repo.fullName)}
                     >
                       <div className={`flex items-center justify-center w-12 h-12 rounded-full ${
                         selectedRepository === repo.fullName ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
@@ -1329,16 +1317,16 @@ export default function StreakManagerPage() {
                       <div className="text-xs text-muted-foreground">Last commit {repo.lastUpdatedText}</div>
                     </Button>
                   ))}
-                </div>
-              </CardContent>
-            </Card>
-            
+              </div>
+            </CardContent>
+          </Card>
+          
             <Card className="mb-6">
-              <CardHeader>
+            <CardHeader>
                 <CardTitle>Operation Settings</CardTitle>
                 <CardDescription>Configure how the bulk operation should work</CardDescription>
-              </CardHeader>
-              <CardContent>
+            </CardHeader>
+            <CardContent>
                 <div className="space-y-4">
                   <div>
                     <label className="text-sm font-medium block mb-2">Operation Type</label>
@@ -1394,7 +1382,7 @@ export default function StreakManagerPage() {
                         ))}
                       </div>
                     )}
-                  </div>
+                </div>
                   
                   <div>
                     <label className="text-sm font-medium block mb-2">Commit Message Template</label>
@@ -1548,10 +1536,10 @@ export default function StreakManagerPage() {
                       </span>
                     ) : "Execute Bulk Operation"}
                   </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
         </TabsContent>
       </Tabs>
     </DashboardLayout>
