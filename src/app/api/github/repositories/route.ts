@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from '@/lib/server-supabase';
 import { createGitHubClient } from '@/lib/github-client';
 import { gql } from '@apollo/client';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 // Define types for the repository data
 interface GitHubRepository {
@@ -16,11 +16,30 @@ interface GitHubRepository {
   pushedAt: string;
 }
 
+// Extended type for GraphQL API response
+interface GitHubGraphQLRepository {
+  name: string;
+  nameWithOwner: string;
+  url: string;
+  isPrivate: boolean;
+  description?: string | null;
+  stargazerCount: number;
+  forkCount: number;
+  defaultBranchRef?: {
+    name: string;
+  } | null;
+  updatedAt: string;
+  pushedAt: string;
+  primaryLanguage?: {
+    name: string;
+  } | null;
+}
+
 /**
  * GET handler for /api/github/repositories
  * Fetches all repositories for the authenticated user
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     // Create server-side Supabase client to access authenticated session
     const supabase = await createServerSupabaseClient();
@@ -66,23 +85,44 @@ export async function GET() {
       );
     }
     
+    // Get query parameters from URL
+    const { searchParams } = new URL(req.url);
+    
+    // Parse sorting options (defaulting if not provided)
+    const sortOption = searchParams.get('sort') || 'updated';
+    const sortDirection = searchParams.get('direction') || 'desc';
+    const language = searchParams.get('language') || null;
+    
+    // Determine the GraphQL sorting field based on our API parameter
+    let orderByField = 'UPDATED_AT';
+    if (sortOption === 'created') orderByField = 'CREATED_AT';
+    else if (sortOption === 'pushed') orderByField = 'PUSHED_AT';
+    else if (sortOption === 'full_name') orderByField = 'NAME';
+    
+    // Convert to GraphQL enum format
+    const orderByDirection = sortDirection.toUpperCase();
+    
     // Create GitHub API client with user's access token
     const githubClient = createGitHubClient(userData.github_access_token);
     
-    // GraphQL query to fetch repositories
+    // GraphQL query to fetch repositories with filter parameters
     const REPOSITORIES_QUERY = gql`
       query FetchUserRepositories {
         viewer {
           repositories(
             first: 50, 
-            orderBy: {field: UPDATED_AT, direction: DESC},
+            orderBy: {field: ${orderByField}, direction: ${orderByDirection}},
             ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
+            ${language ? `, languageFilter: "${language}"` : ''}
           ) {
             nodes {
               name
               nameWithOwner
               url
               isPrivate
+              description
+              stargazerCount
+              forkCount
               defaultBranchRef {
                 name
               }
@@ -107,20 +147,28 @@ export async function GET() {
     });
     
     // Format repository data for the frontend
-    const repositories = data.viewer.repositories.nodes.map((repo: any) => ({
+    const repositories = data.viewer.repositories.nodes.map((repo: GitHubGraphQLRepository) => ({
       name: repo.name,
       fullName: repo.nameWithOwner,
       url: repo.url,
       isPrivate: repo.isPrivate,
+      description: repo.description,
+      starCount: repo.stargazerCount,
+      forkCount: repo.forkCount,
       defaultBranch: repo.defaultBranchRef?.name || 'main',
       updatedAt: repo.updatedAt,
-      lastPushedAt: repo.pushedAt,
+      pushedAt: repo.pushedAt,
       language: repo.primaryLanguage?.name || 'Unknown',
       // Calculate "last updated" text for display
       lastUpdatedText: getTimeAgoText(new Date(repo.pushedAt))
     }));
     
-    return NextResponse.json({ repositories });
+    // Filter by language on the client side if the GraphQL languageFilter doesn't work
+    const filteredRepositories = language 
+      ? repositories.filter((repo: { language?: string }) => repo.language && repo.language.toLowerCase() === language.toLowerCase())
+      : repositories;
+    
+    return NextResponse.json({ repositories: filteredRepositories });
     
   } catch (error: unknown) {
     console.error('Error fetching repositories:', error);

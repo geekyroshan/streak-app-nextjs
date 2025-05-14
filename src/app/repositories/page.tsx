@@ -2,7 +2,7 @@
 
 import { DashboardLayout } from '@/components/dashboard-layout/DashboardLayout';
 import { RepositoryCard } from '@/components/repository/RepositoryCard';
-import { RepositoryDetails } from '@/components/repository/RepositoryDetails';
+import { RepositoryDetails, RepositoryDetailsProps } from '@/components/repository/RepositoryDetails';
 import { useAuth } from '@/context/AuthContext';
 import { useState, useMemo, useEffect } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -18,14 +18,33 @@ import {
   PaginationPrevious
 } from '@/components/ui/pagination';
 
+// Define our repository interface to match API response
+interface Repository {
+  id?: string;
+  name: string;
+  fullName: string;
+  url: string;
+  description?: string;
+  language?: string;
+  starCount?: number;
+  forkCount?: number;
+  updatedAt: string;
+  pushedAt?: string;
+  defaultBranch?: string;
+  isPrivate?: boolean;
+}
+
+// Define sort options type
+type SortOption = 'updated' | 'created' | 'pushed' | 'full_name' | 'stars';
+
 export default function RepositoriesPage() {
   const { user } = useAuth();
   const [language, setLanguage] = useState<string | undefined>(undefined);
-  const [sortOption, setSortOption] = useState<'updated' | 'created' | 'pushed' | 'full_name'>('updated');
+  const [sortOption, setSortOption] = useState<SortOption>('updated');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedRepo, setSelectedRepo] = useState<any | null>(null);
+  const [selectedRepo, setSelectedRepo] = useState<RepositoryDetailsProps['repository'] | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const perPage = 10;
   
@@ -35,7 +54,7 @@ export default function RepositoriesPage() {
   }, [user]);
 
   // State for direct API call
-  const [repositories, setRepositories] = useState<any[]>([]);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -51,17 +70,10 @@ export default function RepositoriesPage() {
         setIsLoading(true);
         setError(null);
         
-        // Build params for filtering
+        // We'll handle sorting and filtering client-side for more flexibility
         const params = new URLSearchParams({
-          sort: sortOption,
-          direction: sortDirection,
-          per_page: '50', // Fetch more to handle client-side filtering
+          per_page: '100', // Fetch more repos
         });
-        
-        // Add language filter if set
-        if (language && language !== 'All languages') {
-          params.append('language', language);
-        }
         
         const response = await fetch(`/api/github/repositories?${params.toString()}`);
         
@@ -85,11 +97,11 @@ export default function RepositoriesPage() {
     }
     
     fetchRepositories();
-  }, [githubUsername, language, sortOption, sortDirection]);
+  }, [githubUsername]);
 
   // Extract available languages for the filter
   const availableLanguages = useMemo(() => {
-    if (!repositories) return [];
+    if (!repositories.length) return [];
     
     const languages = new Set<string>();
     repositories.forEach(repo => {
@@ -116,7 +128,7 @@ export default function RepositoriesPage() {
       setSortOption('full_name');
       setSortDirection('asc');
     } else if (value === 'Stars') {
-      setSortOption('full_name'); // GitHub API doesn't support sorting by stars directly
+      setSortOption('stars');
       setSortDirection('desc');
     } else if (value === 'Last updated') {
       setSortOption('updated');
@@ -138,25 +150,68 @@ export default function RepositoriesPage() {
     setCurrentPage(1); // Reset to first page
   };
 
-  // Filter repositories by search query
-  const filteredRepositories = useMemo(() => {
-    if (!searchQuery.trim()) return repositories;
+  // Filter and sort repositories based on current options
+  const filteredAndSortedRepositories = useMemo(() => {
+    // First, filter by language if specified
+    let filtered = repositories;
     
-    const query = searchQuery.toLowerCase();
-    return repositories.filter(repo => 
-      repo.name.toLowerCase().includes(query) || 
-      (repo.description && repo.description.toLowerCase().includes(query))
-    );
-  }, [repositories, searchQuery]);
+    if (language) {
+      filtered = filtered.filter(repo => 
+        repo.language && repo.language.toLowerCase() === language.toLowerCase()
+      );
+    }
+    
+    // Then, filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(repo => 
+        repo.name.toLowerCase().includes(query) || 
+        (repo.description && repo.description.toLowerCase().includes(query))
+      );
+    }
+    
+    // Finally, sort the repositories based on selected sort option
+    return [...filtered].sort((a, b) => {
+      let comparison = 0;
+      
+      // Sort based on the selected option
+      switch (sortOption) {
+        case 'full_name':
+          comparison = a.name.localeCompare(b.name);
+          break;
+        case 'stars':
+          comparison = (b.starCount || 0) - (a.starCount || 0);
+          break;
+        case 'updated':
+          comparison = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          break;
+        case 'pushed':
+          // Fall back to updatedAt if pushedAt is missing
+          const aPushedAt = a.pushedAt ? new Date(a.pushedAt) : new Date(a.updatedAt);
+          const bPushedAt = b.pushedAt ? new Date(b.pushedAt) : new Date(b.updatedAt);
+          comparison = bPushedAt.getTime() - aPushedAt.getTime();
+          break;
+        case 'created':
+          // We don't have created date, fallback to updatedAt
+          comparison = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          break;
+        default:
+          comparison = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      }
+      
+      // Adjust comparison direction
+      return sortDirection === 'asc' ? -comparison : comparison;
+    });
+  }, [repositories, language, searchQuery, sortOption, sortDirection]);
 
   // Calculate pagination
   const paginatedRepositories = useMemo(() => {
     const startIndex = (currentPage - 1) * perPage;
     const endIndex = startIndex + perPage;
-    return filteredRepositories.slice(startIndex, endIndex);
-  }, [filteredRepositories, currentPage, perPage]);
+    return filteredAndSortedRepositories.slice(startIndex, endIndex);
+  }, [filteredAndSortedRepositories, currentPage, perPage]);
 
-  const totalPages = Math.ceil(filteredRepositories.length / perPage);
+  const totalPages = Math.ceil(filteredAndSortedRepositories.length / perPage);
 
   // Helper function to format relative time
   const getRelativeTimeString = (dateInput: Date | string | null | undefined): string => {
@@ -193,13 +248,37 @@ export default function RepositoriesPage() {
     return `${diffYear} years ago`;
   };
 
+  // Determine activity status based on last push date
+  const getActivityStatus = (updatedAt: string): 'Active' | 'Moderate' | 'Low activity' | 'Inactive' => {
+    const date = new Date(updatedAt);
+    const now = new Date();
+    const diffDays = Math.round((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+    
+    if (diffDays < 7) return 'Active';
+    if (diffDays < 30) return 'Moderate';
+    if (diffDays < 90) return 'Low activity';
+    return 'Inactive';
+  };
+
   // Handle opening repository details
-  const handleViewDetails = (repo: any) => {
+  const handleViewDetails = (repo: Repository) => {
     setSelectedRepo({
-      ...repo,
+      name: repo.name,
+      fullName: repo.fullName,
+      description: repo.description || "",
+      url: repo.url,
+      homepage: null,
+      isPrivate: Boolean(repo.isPrivate),
+      isFork: false, // We don't have this info
+      language: repo.language || null,
+      starCount: repo.starCount || 0,
+      forkCount: repo.forkCount || 0,
+      openIssuesCount: 0, // We don't have this info
+      defaultBranch: repo.defaultBranch || "main",
       updatedAt: new Date(repo.updatedAt),
-      pushedAt: repo.lastPushedAt ? new Date(repo.lastPushedAt) : null,
+      pushedAt: repo.pushedAt ? new Date(repo.pushedAt) : null,
     });
+    
     setIsDetailsOpen(true);
   };
 
@@ -251,6 +330,7 @@ export default function RepositoriesPage() {
                 sortOption === 'created' && sortDirection === 'desc' ? 'Recently created' :
                 sortOption === 'pushed' && sortDirection === 'desc' ? 'Recently pushed' :
                 sortOption === 'full_name' && sortDirection === 'asc' ? 'Name' :
+                sortOption === 'stars' && sortDirection === 'desc' ? 'Stars' :
                 'Last updated'
               }
             >
@@ -274,10 +354,10 @@ export default function RepositoriesPage() {
         <div className="text-center p-8 bg-card rounded-lg border border-border mt-6">
           <p className="text-destructive">Error loading repositories. Please try again later.</p>
         </div>
-      ) : filteredRepositories.length === 0 ? (
+      ) : filteredAndSortedRepositories.length === 0 ? (
         <div className="text-center p-8 bg-card rounded-lg border border-border mt-6">
           <p className="text-muted-foreground">
-            {searchQuery ? 'No repositories found matching your search' : 'No repositories found. Try adjusting your filters or connecting your GitHub account.'}
+            {searchQuery || language ? 'No repositories found matching your filters' : 'No repositories found. Try connecting your GitHub account.'}
           </p>
         </div>
       ) : (
@@ -292,7 +372,7 @@ export default function RepositoriesPage() {
                 stars={repo.starCount || 0}
                 forks={repo.forkCount || 0}
                 lastCommit={getRelativeTimeString(repo.pushedAt || repo.updatedAt)}
-                activity={repo.activity || "Active"}
+                activity={getActivityStatus(repo.updatedAt)}
                 onViewOnGitHub={() => window.open(repo.url, '_blank')}
                 onViewDetails={() => handleViewDetails(repo)}
               />
@@ -374,7 +454,7 @@ export default function RepositoriesPage() {
           )}
           
           <div className="mt-4 text-center text-sm text-muted-foreground">
-            Showing {paginatedRepositories.length} of {filteredRepositories.length} repositories
+            Showing {paginatedRepositories.length} of {filteredAndSortedRepositories.length} repositories
           </div>
         </>
       )}
