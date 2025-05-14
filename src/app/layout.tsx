@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastContainer } from "@/components/ui/toast";
 import ClientProviders from "@/components/ClientProviders";
+import { Analytics } from "@vercel/analytics/next"
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,6 +35,7 @@ export default function RootLayout({
           {children}
           <ToastContainer position="bottom-right" />
         </ClientProviders>
+        <Analytics />
       </body>
     </html>
   );
