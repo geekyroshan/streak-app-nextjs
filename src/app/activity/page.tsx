@@ -238,38 +238,7 @@ export default function ActivityPage() {
         )}
       </div>
       
-      {/* Activity Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        {isLoading ? (
-          <>
-            <Skeleton className="h-[120px] w-full" />
-            <Skeleton className="h-[120px] w-full" />
-            <Skeleton className="h-[120px] w-full" />
-          </>
-        ) : activityStats ? (
-          <>
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h3 className="text-lg font-medium mb-2">Most Active Day</h3>
-              <p className="text-3xl font-bold">{activityStats.mostActiveDay}</p>
-              <p className="text-sm text-muted-foreground mt-1">{activityStats.mostActiveDayCount} contributions on average</p>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h3 className="text-lg font-medium mb-2">Peak Hours</h3>
-              <p className="text-3xl font-bold">{activityStats.peakHours}</p>
-              <p className="text-sm text-muted-foreground mt-1">{activityStats.peakPercentage}% of all contributions</p>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h3 className="text-lg font-medium mb-2">Most Productive Month</h3>
-              <p className="text-3xl font-bold">{activityStats.mostProductiveMonth}</p>
-              <p className="text-sm text-muted-foreground mt-1">{activityStats.mostProductiveMonthCount} contributions total</p>
-            </div>
-          </>
-        ) : (
-          <div className="col-span-3 text-center p-6 bg-card rounded-lg border border-border">
-            <p className="text-muted-foreground">No activity statistics available.</p>
-          </div>
-        )}
-      </div>
+      {/* Note: Activity Statistics cards have been migrated to Analytics page */}
     </DashboardLayout>
   );
 } 
