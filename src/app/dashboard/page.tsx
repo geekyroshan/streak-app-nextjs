@@ -228,6 +228,24 @@ export default function DashboardPage() {
           {processedUserData?.bio && (
             <p className="text-muted-foreground mt-1">{processedUserData.bio}</p>
           )}
+          
+          {/* Add GitHub token warning if missing */}
+          {!processedUserData && !isUserLoading && (
+            <div className="mt-3 p-2 bg-destructive/10 text-destructive rounded">
+              <p className="text-sm font-medium">⚠️ GitHub connection issue detected</p>
+              <p className="text-xs mt-1">
+                We couldn't access your GitHub data. Try refreshing the page or logging out and back in.
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button 
+                  onClick={() => window.location.reload()} 
+                  className="text-xs px-2 py-1 bg-secondary rounded hover:bg-secondary/80"
+                >
+                  Refresh page
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-card p-4 rounded-lg shadow-sm mb-6">
@@ -336,7 +354,8 @@ export default function DashboardPage() {
                 forks={repo.forkCount || 0}
                 lastCommit={getRelativeTimeString(new Date(repo.pushedAt || repo.updatedAt))}
                 activity={repo.activity || "Active"}
-                onSelect={() => window.open(repo.url, '_blank')}
+                onViewOnGitHub={() => window.open(repo.url, '_blank')}
+                onViewDetails={() => window.open(repo.url, '_blank')}
               />
             ))
           ) : (

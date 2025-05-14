@@ -30,32 +30,63 @@ export async function getGitHubToken(req: NextRequest): Promise<string | null> {
     const cookieStore = cookies();
     const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
     
+    console.log('GitHub middleware: Attempting to get user session');
+    
     // Get the current session
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    if (sessionError) {
+      console.error('GitHub middleware: Error retrieving session:', sessionError);
+    }
     
     if (session?.user) {
+      console.log('GitHub middleware: Session found, user ID:', session.user.id);
+      console.log('GitHub middleware: User email:', session.user.email);
+      
       // Get the user's GitHub token from the database
       const { data: userData, error } = await supabase
         .from('users')
-        .select('github_access_token')
+        .select('github_access_token, github_username')
         .eq('auth_id', session.user.id)
         .single();
       
-      if (!error && userData?.github_access_token) {
-        console.log('Using GitHub token from database for user:', session.user.email);
-        return userData.github_access_token;
-      } else if (error) {
-        console.error('Error retrieving GitHub token from database:', error);
+      if (error) {
+        console.error('GitHub middleware: Error retrieving GitHub token from database:', error);
+      } else if (!userData) {
+        console.warn('GitHub middleware: User not found in database:', session.user.id);
       } else {
-        console.warn('No GitHub token found in database for user:', session.user.email);
+        console.log('GitHub middleware: User record found, GitHub username:', userData.github_username);
+        console.log('GitHub middleware: GitHub token present in DB:', !!userData.github_access_token);
+        
+        if (userData.github_access_token) {
+          console.log('GitHub middleware: Successfully retrieved GitHub token from database');
+          return userData.github_access_token;
+        } else {
+          console.warn('GitHub middleware: No GitHub token found in database for user:', session.user.email);
+          
+          // If provider token is available in the session, use it
+          if (session.provider_token) {
+            console.log('GitHub middleware: Using provider_token from session as fallback');
+            return session.provider_token;
+          }
+        }
       }
+    } else {
+      console.warn('GitHub middleware: No active session found');
     }
   } catch (error) {
-    console.error('Error while trying to get GitHub token from database:', error);
+    console.error('GitHub middleware: Error while trying to get GitHub token from database:', error);
   }
   
   // Otherwise try to get from environment
-  return process.env.GITHUB_ACCESS_TOKEN || null;
+  const envToken = process.env.GITHUB_ACCESS_TOKEN;
+  if (envToken) {
+    console.log('GitHub middleware: Using GitHub token from environment variable as fallback');
+    return envToken;
+  }
+  
+  console.error('GitHub middleware: No GitHub token available from any source');
+  return null;
 }
 
 /**

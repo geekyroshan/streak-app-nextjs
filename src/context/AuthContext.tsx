@@ -29,6 +29,7 @@ type AuthContextType = {
   error: string | null;
   signInWithGitHub: () => Promise<void>;
   signOut: () => Promise<void>;
+  hasGitHubToken: boolean;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -39,6 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [authInitialized, setAuthInitialized] = useState<boolean>(false);
+  const [hasGitHubToken, setHasGitHubToken] = useState<boolean>(false);
   const router = useRouter();
 
   // This effect handles both the initial session setup and auth state changes
@@ -49,7 +51,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Keep track of auth state initialization
     let initialSessionChecked = false;
     let initializationRetries = 0;
+    let tokenRetries = 0;
     const MAX_RETRIES = 3;
+    const MAX_TOKEN_RETRIES = 5;
+    
+    // Function to check for GitHub token
+    const checkGitHubToken = async (userId: string): Promise<boolean> => {
+      if (!mounted) return false;
+      
+      try {
+        console.log('Auth context: Checking for GitHub token in database');
+        const { data, error } = await supabase
+          .from('users')
+          .select('github_access_token')
+          .eq('auth_id', userId)
+          .single();
+          
+        if (error) {
+          console.error('Auth context: Error checking GitHub token:', error);
+          return false;
+        }
+        
+        const hasToken = !!data?.github_access_token;
+        console.log('Auth context: GitHub token available:', hasToken);
+        setHasGitHubToken(hasToken);
+        return hasToken;
+      } catch (err) {
+        console.error('Auth context: Failed to check GitHub token:', err);
+        return false;
+      }
+    };
     
     // Function to handle new session data
     const handleSessionUpdate = async (newSession: Session | null) => {
@@ -130,15 +161,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.error('Error updating user record:', error);
           } else {
             console.log('Successfully created/updated user record');
+            // Check for GitHub token after update
+            await checkGitHubToken(newSession.user.id);
           }
         } catch (err) {
           console.error('Error updating user record:', err);
+        }
+        
+        // If we don't have a token yet and still have retries, try again
+        if (!hasGitHubToken && tokenRetries < MAX_TOKEN_RETRIES) {
+          console.log(`Auth context: GitHub token not found, retry ${tokenRetries + 1}/${MAX_TOKEN_RETRIES}`);
+          tokenRetries++;
+          
+          // Wait and retry checking for the token
+          setTimeout(async () => {
+            if (newSession?.user && mounted) {
+              const hasToken = await checkGitHubToken(newSession.user.id);
+              
+              if (hasToken) {
+                console.log('Auth context: GitHub token found on retry');
+                setIsLoading(false);
+              } else if (tokenRetries >= MAX_TOKEN_RETRIES) {
+                console.warn('Auth context: Max token retries reached, proceeding anyway');
+                setIsLoading(false);
+              }
+            }
+          }, 1500); // 1.5 second delay between retries
+        } else {
+          // If we have the token or have exhausted retries, stop loading
+          setIsLoading(false);
         }
       }
       
       // Only set loading to false after we've handled the session
       if (initialSessionChecked) {
-        setIsLoading(false);
+        // If no user, set loading to false immediately
+        if (!newSession?.user) {
+          setIsLoading(false);
+        }
+        // If there is a user, loading will be set to false after token check
         setAuthInitialized(true);
       }
     };
@@ -165,6 +226,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Wait 1 second and try again
           setTimeout(setupInitialSession, 1000);
           return;
+        }
+        
+        // If we have a session with a user, check for GitHub token
+        if (data.session?.user) {
+          await checkGitHubToken(data.session.user.id);
         }
         
         // Handle the session data
@@ -201,6 +267,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.log('User signed out, clearing session');
             setUser(null);
             setSession(null);
+            setHasGitHubToken(false);
             setIsLoading(false);
             break;
             
@@ -227,7 +294,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [hasGitHubToken]);
 
   const signInWithGitHub = async () => {
     setIsLoading(true);
@@ -271,6 +338,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Clear session data
         setUser(null);
         setSession(null);
+        setHasGitHubToken(false);
         
         // Clear cookies and local session data
         await clearAuthCookies();
@@ -294,6 +362,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error,
     signInWithGitHub,
     signOut,
+    hasGitHubToken,
   };
 
   return (
