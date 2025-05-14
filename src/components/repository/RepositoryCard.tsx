@@ -3,6 +3,7 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { ExternalLink, Info } from 'lucide-react';
 
 interface RepositoryCardProps {
   name: string;
@@ -12,7 +13,8 @@ interface RepositoryCardProps {
   forks: number;
   lastCommit: string;
   activity: 'Active' | 'Moderate' | 'Low activity' | 'Inactive';
-  onSelect: () => void;
+  onViewOnGitHub: () => void;
+  onViewDetails: () => void;
 }
 
 export function RepositoryCard({
@@ -23,7 +25,8 @@ export function RepositoryCard({
   forks,
   lastCommit,
   activity,
-  onSelect,
+  onViewOnGitHub,
+  onViewDetails,
 }: RepositoryCardProps) {
   return (
     <Card className="border-border bg-card">
@@ -66,7 +69,16 @@ export function RepositoryCard({
             </div>
           </div>
           
-          <Button variant="outline" onClick={onSelect}>Select</Button>
+          <div className="flex flex-col space-y-2">
+            <Button variant="outline" size="sm" onClick={onViewOnGitHub} className="flex items-center justify-between">
+              View on GitHub
+              <ExternalLink className="ml-2 h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={onViewDetails} className="flex items-center justify-between">
+              Details
+              <Info className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
         </div>
         
         <div className="flex items-center justify-between mt-4 text-xs text-muted-foreground">
