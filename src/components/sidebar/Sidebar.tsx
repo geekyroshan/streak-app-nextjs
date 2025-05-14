@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 type NavItem = {
   label: string;
@@ -138,7 +139,10 @@ export function Sidebar() {
         </nav>
       </div>
       
-      {renderSignOutButton()}
+      <div className="space-y-4">
+        <ThemeToggle className="h-12 w-12 mx-auto" />
+        {renderSignOutButton()}
+      </div>
     </aside>
   );
 }
