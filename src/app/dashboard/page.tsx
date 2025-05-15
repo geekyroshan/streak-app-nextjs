@@ -17,13 +17,16 @@ import { Button } from '@/components/ui/button';
 // Client component wrapper for search params
 import { useSearchParams } from 'next/navigation';
 
-function SearchParamsHandler() {
+function SearchParamsHandler({ setFreshLogin }: { setFreshLogin: (value: boolean) => void }) {
   const searchParams = useSearchParams();
   
   useEffect(() => {
     const fresh = searchParams.get('fresh');
     if (fresh === 'true') {
       console.log('Dashboard: Fresh login detected, cleaning URL');
+      
+      // Set the fresh login state in parent component
+      setFreshLogin(true);
       
       // Clean up URL without causing page reloads
       const url = new URL(window.location.href);
@@ -36,7 +39,7 @@ function SearchParamsHandler() {
       
       window.history.replaceState({}, '', url.toString());
     }
-  }, [searchParams]);
+  }, [searchParams, setFreshLogin]);
   
   return null;
 }
@@ -46,7 +49,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   const [needsReload, setNeedsReload] = useState(false);
-  const searchParams = useSearchParams();
+  const [freshLogin, setFreshLogin] = useState(false);
   
   // GitHub username from Supabase auth
   const githubUsername = useMemo(() => {
@@ -75,11 +78,11 @@ export default function DashboardPage() {
     }
     
     // If we have a user but no GitHub token, we might need to reload
-    if (user && !hasGitHubToken && !isLoading && !searchParams.get('fresh')) {
+    if (user && !hasGitHubToken && !isLoading && !freshLogin) {
       console.log('Dashboard: User authenticated but no GitHub token found, might need reload');
       setNeedsReload(true);
     }
-  }, [user, isLoading, session, hasGitHubToken, searchParams]);
+  }, [user, isLoading, session, hasGitHubToken, freshLogin]);
 
   // Handle reload if needed
   useEffect(() => {
@@ -228,7 +231,7 @@ export default function DashboardPage() {
     <DashboardLayout>
       {/* Wrap searchParams usage in Suspense */}
       <Suspense fallback={null}>
-        <SearchParamsHandler />
+        <SearchParamsHandler setFreshLogin={setFreshLogin} />
       </Suspense>
       
       <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
