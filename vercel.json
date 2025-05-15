@@ -2,6 +2,7 @@
   "version": 2,
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/?code=:code&state=:state", "destination": "/auth/callback?code=:code&state=:state" },
     { "source": "/(.*)", "destination": "/$1" }
   ],
   "headers": [
