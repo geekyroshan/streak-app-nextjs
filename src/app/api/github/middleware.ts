@@ -30,49 +30,66 @@ export async function getGitHubToken(req: NextRequest): Promise<string | null> {
     const cookieStore = cookies();
     const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
     
-    console.log('GitHub middleware: Attempting to get user session');
+    console.log('GitHub middleware: Attempting to get authenticated user');
     
-    // Get the current session
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    // Get the authenticated user first - this is more secure than getSession()
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
     
-    if (sessionError) {
-      console.error('GitHub middleware: Error retrieving session:', sessionError);
+    if (userError) {
+      console.error('GitHub middleware: Error retrieving user:', userError);
+      return null;
     }
     
-    if (session?.user) {
-      console.log('GitHub middleware: Session found, user ID:', session.user.id);
-      console.log('GitHub middleware: User email:', session.user.email);
+    if (!user) {
+      console.warn('GitHub middleware: No authenticated user found');
+      return null;
+    }
+    
+    console.log('GitHub middleware: Authenticated user found, user ID:', user.id);
+    console.log('GitHub middleware: User email:', user.email);
+    
+    // Get the user's GitHub token from the database
+    const { data: userData, error } = await supabase
+      .from('users')
+      .select('github_access_token, github_username')
+      .eq('auth_id', user.id)
+      .single();
+    
+    if (error) {
+      console.error('GitHub middleware: Error retrieving GitHub token from database:', error);
+    } else if (!userData) {
+      console.warn('GitHub middleware: User not found in database:', user.id);
+    } else {
+      console.log('GitHub middleware: User record found, GitHub username:', userData.github_username);
+      console.log('GitHub middleware: GitHub token present in DB:', !!userData.github_access_token);
       
-      // Get the user's GitHub token from the database
-      const { data: userData, error } = await supabase
-        .from('users')
-        .select('github_access_token, github_username')
-        .eq('auth_id', session.user.id)
-        .single();
-      
-      if (error) {
-        console.error('GitHub middleware: Error retrieving GitHub token from database:', error);
-      } else if (!userData) {
-        console.warn('GitHub middleware: User not found in database:', session.user.id);
+      if (userData.github_access_token) {
+        console.log('GitHub middleware: Successfully retrieved GitHub token from database');
+        return userData.github_access_token;
       } else {
-        console.log('GitHub middleware: User record found, GitHub username:', userData.github_username);
-        console.log('GitHub middleware: GitHub token present in DB:', !!userData.github_access_token);
+        console.warn('GitHub middleware: No GitHub token found in database for user:', user.email);
         
-        if (userData.github_access_token) {
-          console.log('GitHub middleware: Successfully retrieved GitHub token from database');
-          return userData.github_access_token;
-        } else {
-          console.warn('GitHub middleware: No GitHub token found in database for user:', session.user.email);
+        // If the token is not in database, try to get it from the session as fallback
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.provider_token) {
+          console.log('GitHub middleware: Using provider_token from session as fallback');
           
-          // If provider token is available in the session, use it
-          if (session.provider_token) {
-            console.log('GitHub middleware: Using provider_token from session as fallback');
-            return session.provider_token;
+          // Since we found a token in the session but not in DB, store it for future use
+          try {
+            await supabase
+              .from('users')
+              .update({ github_access_token: session.provider_token })
+              .eq('auth_id', user.id);
+              
+            console.log('GitHub middleware: Saved provider_token to database for future use');
+          } catch (updateErr) {
+            console.error('GitHub middleware: Failed to save token to database:', updateErr);
           }
+          
+          return session.provider_token;
         }
       }
-    } else {
-      console.warn('GitHub middleware: No active session found');
     }
   } catch (error) {
     console.error('GitHub middleware: Error while trying to get GitHub token from database:', error);

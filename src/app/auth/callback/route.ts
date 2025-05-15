@@ -112,6 +112,10 @@ export async function GET(request: NextRequest) {
             console.log('User record created/updated in callback handler with github_username:', userData.github_username);
             console.log('GitHub token stored:', !!userData.github_access_token);
           }
+          
+          // Wait a short time to ensure the database update completes
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
         } catch (dbError) {
           console.error('Error creating user record in callback:', dbError);
           // Continue even if db update fails

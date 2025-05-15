@@ -47,14 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     console.log('Setting up auth context...');
     let mounted = true;
-    
-    // Keep track of auth state initialization
-    let initialSessionChecked = false;
-    let initializationRetries = 0;
-    let tokenRetries = 0;
-    const MAX_RETRIES = 3;
-    const MAX_TOKEN_RETRIES = 5;
-    
+
     // Function to check for GitHub token
     const checkGitHubToken = async (userId: string): Promise<boolean> => {
       if (!mounted) return false;
@@ -74,7 +67,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         const hasToken = !!data?.github_access_token;
         console.log('Auth context: GitHub token available:', hasToken);
-        setHasGitHubToken(hasToken);
+        
+        if (mounted) {
+          setHasGitHubToken(hasToken);
+        }
         return hasToken;
       } catch (err) {
         console.error('Auth context: Failed to check GitHub token:', err);
@@ -82,54 +78,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
     
-    // Function to handle new session data
-    const handleSessionUpdate = async (newSession: Session | null) => {
+    // Function to handle new user data
+    const handleUserUpdate = async (newUser: User | null) => {
       if (!mounted) return;
       
-      console.log('Auth context: Handling session update, session exists:', !!newSession);
-      if (newSession?.user) {
-        console.log('Auth context: User ID in session:', newSession.user.id);
-        console.log('Auth context: User email:', newSession.user.email);
-        console.log('Auth context: User metadata available:', !!newSession.user.user_metadata);
-        console.log('Auth context: Provider token available:', !!newSession.provider_token);
+      console.log('Auth context: Handling user update, user exists:', !!newUser);
+      if (newUser) {
+        console.log('Auth context: User ID:', newUser.id);
+        console.log('Auth context: User email:', newUser.email);
+        console.log('Auth context: User metadata available:', !!newUser.user_metadata);
       }
       
-      // Update state with session data
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
+      // Update state with user data
+      setUser(newUser);
       
-      // If there's a valid session and user data, create/update the user record in Supabase
-      if (newSession?.user) {
+      // If there's a valid user, create/update the user record in Supabase
+      if (newUser) {
         try {
           console.log('Creating/updating user record in database');
-          console.log('User ID:', newSession.user.id);
-          console.log('User metadata:', JSON.stringify(newSession.user.user_metadata, null, 2));
+          console.log('User ID:', newUser.id);
+          console.log('User metadata:', JSON.stringify(newUser.user_metadata, null, 2));
+          
+          // Get current session to access provider token
+          const { data: sessionData } = await supabase.auth.getSession();
+          const currentSession = sessionData.session;
+          
+          // Save current session for context
+          if (mounted && currentSession) {
+            setSession(currentSession);
+          }
           
           // First check if user already exists to avoid overwriting github_username
           const { data: existingUser, error: lookupError } = await supabase
             .from('users')
             .select('id, auth_id, github_username, github_access_token')
-            .eq('auth_id', newSession.user.id)
+            .eq('auth_id', newUser.id)
             .single();
           
           // Extract GitHub username from metadata
-          const githubUsername = newSession.user.user_metadata?.user_name || null;
+          const githubUsername = newUser.user_metadata?.user_name || null;
           console.log('GitHub username from metadata:', githubUsername);
           
           // Extract GitHub access token
-          const githubAccessToken = newSession.provider_token || null;
+          const githubAccessToken = currentSession?.provider_token || null;
           console.log('GitHub access token available in context:', !!githubAccessToken);
           
           // Create user object with all required fields including github_username
           const userData = {
-            id: newSession.user.id,
-            email: newSession.user.email,
-            auth_id: newSession.user.id,
+            id: newUser.id,
+            email: newUser.email,
+            auth_id: newUser.id,
             last_login: new Date().toISOString(),
-            avatar_url: newSession.user.user_metadata?.avatar_url || null,
-            display_name: newSession.user.user_metadata?.full_name || 
-                        newSession.user.user_metadata?.user_name || 
-                        newSession.user.user_metadata?.name || 
+            avatar_url: newUser.user_metadata?.avatar_url || null,
+            display_name: newUser.user_metadata?.full_name || 
+                        newUser.user_metadata?.user_name || 
+                        newUser.user_metadata?.name || 
                         'GitHub User',
             github_username: githubUsername,
             github_access_token: githubAccessToken
@@ -161,88 +164,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.error('Error updating user record:', error);
           } else {
             console.log('Successfully created/updated user record');
-            // Immediately check for GitHub token after update
-            const hasToken = await checkGitHubToken(newSession.user.id);
-            setHasGitHubToken(hasToken);
+            
+            // Check for GitHub token after update
+            const hasToken = await checkGitHubToken(newUser.id);
+            
+            if (mounted) {
+              // Set loading state - only finish loading if we have token or explicitly don't
+              setIsLoading(false);
+              setAuthInitialized(true);
+            }
           }
         } catch (err) {
           console.error('Error updating user record:', err);
-        }
-        
-        // If after database operation we still don't have token, try again with retries
-        if (!hasGitHubToken && tokenRetries < MAX_TOKEN_RETRIES) {
-          console.log(`Auth context: GitHub token not found, retry ${tokenRetries + 1}/${MAX_TOKEN_RETRIES}`);
-          tokenRetries++;
-          
-          // Wait and retry checking for the token
-          setTimeout(async () => {
-            if (newSession?.user && mounted) {
-              const hasToken = await checkGitHubToken(newSession.user.id);
-              
-              if (hasToken) {
-                console.log('Auth context: GitHub token found on retry');
-                setIsLoading(false);
-              } else if (tokenRetries >= MAX_TOKEN_RETRIES) {
-                console.warn('Auth context: Max token retries reached, proceeding anyway');
-                setIsLoading(false);
-              }
-            }
-          }, 1500); // 1.5 second delay between retries
-        } else {
-          // If we have the token or have exhausted retries, stop loading
-          setIsLoading(false);
+          if (mounted) {
+            setIsLoading(false);
+            setAuthInitialized(true);
+          }
         }
       } else {
-        // If no user, set loading to false immediately
-        setIsLoading(false);
-      }
-      
-      // Only mark initialization as complete after we've handled the session
-      if (initialSessionChecked) {
-        setAuthInitialized(true);
+        // No user, set loading to false immediately
+        if (mounted) {
+          setIsLoading(false);
+          setAuthInitialized(true);
+        }
       }
     };
 
-    // Get the initial session
-    const setupInitialSession = async () => {
+    // Setup initial auth state using getUser() instead of getSession()
+    const setupInitialAuth = async () => {
       try {
-        console.log('Fetching initial session...');
-        const { data, error } = await supabase.auth.getSession();
+        console.log('Fetching authenticated user data...');
+        // Get authenticated user - this is more secure than getSession()
+        const { data: { user: authUser }, error: userError } = await supabase.auth.getUser();
         
-        if (error) {
-          console.error('Error retrieving initial session:', error);
-          setError(error.message);
+        if (userError) {
+          console.error('Error retrieving user:', userError);
+          setError(userError.message);
           setIsLoading(false);
           return;
         }
         
-        console.log('Initial session retrieved:', data.session ? 'Session exists' : 'No session');
-        initialSessionChecked = true;
+        // Also get session for provider token
+        const { data: { session: authSession }, error: sessionError } = await supabase.auth.getSession();
         
-        if (!data.session && initializationRetries < MAX_RETRIES) {
-          console.log(`Auth context: No session found, retry attempt ${initializationRetries + 1}/${MAX_RETRIES}`);
-          initializationRetries++;
-          // Wait 1 second and try again
-          setTimeout(setupInitialSession, 1000);
-          return;
+        if (sessionError) {
+          console.error('Error retrieving session:', sessionError);
+        } else if (authSession) {
+          setSession(authSession);
         }
         
-        // If we have a session with a user, check for GitHub token
-        if (data.session?.user) {
-          await checkGitHubToken(data.session.user.id);
-        }
+        console.log('Initial auth state retrieved:', authUser ? 'User exists' : 'No user');
         
-        // Handle the session data
-        await handleSessionUpdate(data.session);
+        // Handle the user data
+        await handleUserUpdate(authUser);
       } catch (err) {
-        console.error('Error during initial session setup:', err);
+        console.error('Error during initial auth setup:', err);
         setError(err instanceof Error ? err.message : 'An unknown error occurred');
         setIsLoading(false);
       }
     };
 
-    // Start the session setup process
-    setupInitialSession();
+    // Start the auth setup process
+    setupInitialAuth();
 
     // Subscribe to auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -253,11 +236,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         switch (event) {
           case 'SIGNED_IN':
             console.log('User signed in, updating session');
-            await handleSessionUpdate(newSession);
-            
-            // Remove the problematic redirect and just update state
-            setIsLoading(false);
-            setAuthInitialized(true);
+            // Get the authenticated user object
+            const { data: { user: newUser } } = await supabase.auth.getUser();
+            setSession(newSession);
+            await handleUserUpdate(newUser);
             break;
             
           case 'SIGNED_OUT':
@@ -270,17 +252,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             
           case 'TOKEN_REFRESHED':
             console.log('Token refreshed, updating session');
-            await handleSessionUpdate(newSession);
+            setSession(newSession);
             break;
             
           case 'USER_UPDATED':
             console.log('User updated, updating session');
-            await handleSessionUpdate(newSession);
+            const { data: { user: updatedUser } } = await supabase.auth.getUser();
+            setSession(newSession);
+            await handleUserUpdate(updatedUser);
             break;
-            
-          default:
-            console.log('Other auth event:', event);
-            await handleSessionUpdate(newSession);
         }
       }
     );
@@ -291,7 +271,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [hasGitHubToken]);
+  }, []);
 
   const signInWithGitHub = async () => {
     setIsLoading(true);
