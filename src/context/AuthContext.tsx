@@ -161,14 +161,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.error('Error updating user record:', error);
           } else {
             console.log('Successfully created/updated user record');
-            // Check for GitHub token after update
-            await checkGitHubToken(newSession.user.id);
+            // Immediately check for GitHub token after update
+            const hasToken = await checkGitHubToken(newSession.user.id);
+            setHasGitHubToken(hasToken);
           }
         } catch (err) {
           console.error('Error updating user record:', err);
         }
         
-        // If we don't have a token yet and still have retries, try again
+        // If after database operation we still don't have token, try again with retries
         if (!hasGitHubToken && tokenRetries < MAX_TOKEN_RETRIES) {
           console.log(`Auth context: GitHub token not found, retry ${tokenRetries + 1}/${MAX_TOKEN_RETRIES}`);
           tokenRetries++;
@@ -191,15 +192,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // If we have the token or have exhausted retries, stop loading
           setIsLoading(false);
         }
+      } else {
+        // If no user, set loading to false immediately
+        setIsLoading(false);
       }
       
-      // Only set loading to false after we've handled the session
+      // Only mark initialization as complete after we've handled the session
       if (initialSessionChecked) {
-        // If no user, set loading to false immediately
-        if (!newSession?.user) {
-          setIsLoading(false);
-        }
-        // If there is a user, loading will be set to false after token check
         setAuthInitialized(true);
       }
     };
@@ -255,12 +254,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           case 'SIGNED_IN':
             console.log('User signed in, updating session');
             await handleSessionUpdate(newSession);
-            // Force a reload after sign-in to ensure components have the latest auth state
-            if (window.location.href.indexOf('fresh=true') === -1) {
-              console.log('Auth context: Redirecting with fresh=true after sign in');
-              const currentPath = window.location.pathname;
-              window.location.href = `${currentPath}?fresh=true&_=${Date.now()}`;
-            }
+            
+            // Remove the problematic redirect and just update state
+            setIsLoading(false);
+            setAuthInitialized(true);
             break;
             
           case 'SIGNED_OUT':

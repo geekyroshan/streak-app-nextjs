@@ -8,7 +8,7 @@ import { RepositoryCard } from '@/components/repository/RepositoryCard';
 import { Calendar, GitBranch, BarChart2, Clock } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, useMemo, Suspense } from 'react';
+import { useEffect, useState, useMemo, Suspense, useCallback } from 'react';
 import { useGitHubUser, transformUserData } from '@/hooks/github/use-github-user';
 import { useGitHubContributions, transformContributionsData } from '@/hooks/github/use-github-contributions';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -46,10 +46,52 @@ export default function DashboardPage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   
+  // State for repositories
+  const [repositories, setRepositories] = useState<any[]>([]);
+  const [isRepositoriesLoading, setIsRepositoriesLoading] = useState(true);
+  const [repositoriesError, setRepositoriesError] = useState<Error | null>(null);
+  
   // GitHub username from Supabase auth
   const githubUsername = useMemo(() => {
     return user?.user_metadata?.user_name || '';
   }, [user]);
+
+  // Fetch repositories directly using the API
+  const fetchRepositories = useCallback(async () => {
+    if (!githubUsername) {
+      setIsRepositoriesLoading(false);
+      return;
+    }
+    
+    try {
+      setIsRepositoriesLoading(true);
+      
+      const params = new URLSearchParams({
+        sort: 'updated',
+        direction: 'desc',
+        per_page: '2'
+      });
+      
+      const response = await fetch(`/api/github/repositories?${params.toString()}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch repositories');
+      }
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      setRepositories(data.repositories || []);
+    } catch (err) {
+      console.error('Error fetching repositories:', err);
+      setRepositoriesError(err instanceof Error ? err : new Error('Unknown error'));
+    } finally {
+      setIsRepositoriesLoading(false);
+    }
+  }, [githubUsername]);
 
   // Debug logging for auth state
   useEffect(() => {
@@ -70,13 +112,19 @@ export default function DashboardPage() {
     if (!isLoading || user) {
       setAuthChecked(true);
     }
-  }, [user, isLoading, session]);
+    
+    // If we have a user but repositories aren't loaded yet, force a refresh of repositories
+    if (user && repositories.length === 0 && !isRepositoriesLoading && !repositoriesError) {
+      fetchRepositories();
+    }
+  }, [user, isLoading, session, repositories, isRepositoriesLoading, repositoriesError, fetchRepositories]);
 
   // Fetch GitHub user data
   const {
     data: userData,
     isLoading: isUserLoading,
-    error: userError
+    error: userError,
+    refetch: refetchUserData
   } = useGitHubUser(githubUsername, {
     enabled: !!githubUsername
   });
@@ -85,56 +133,32 @@ export default function DashboardPage() {
   const {
     data: contributionsData,
     isLoading: isContributionsLoading,
-    error: contributionsError
+    error: contributionsError,
+    refetch: refetchContributions
   } = useGitHubContributions(githubUsername, {
     enabled: !!githubUsername
   });
-
-  // State for repositories
-  const [repositories, setRepositories] = useState<any[]>([]);
-  const [isRepositoriesLoading, setIsRepositoriesLoading] = useState(true);
-  const [repositoriesError, setRepositoriesError] = useState<Error | null>(null);
-
-  // Fetch repositories directly using the API
+  
+  // Effect to fetch repositories when username changes
   useEffect(() => {
-    if (!githubUsername) {
-      setIsRepositoriesLoading(false);
-      return;
+    if (githubUsername) {
+      fetchRepositories();
     }
-    
-    async function fetchRepositories() {
-      try {
-        setIsRepositoriesLoading(true);
-        
-        const params = new URLSearchParams({
-          sort: 'updated',
-          direction: 'desc',
-          per_page: '2'
-        });
-        
-        const response = await fetch(`/api/github/repositories?${params.toString()}`);
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch repositories');
-        }
-        
-        const data = await response.json();
-        
-        if (data.error) {
-          throw new Error(data.error);
-        }
-        
-        setRepositories(data.repositories || []);
-      } catch (err) {
-        console.error('Error fetching repositories:', err);
-        setRepositoriesError(err instanceof Error ? err : new Error('Unknown error'));
-      } finally {
-        setIsRepositoriesLoading(false);
+  }, [githubUsername, fetchRepositories]);
+  
+  // Effect to refetch data when user changes
+  useEffect(() => {
+    if (user && githubUsername) {
+      // If we have a user and username but no data, refetch
+      if (!userData || userError) {
+        refetchUserData?.();
+      }
+      
+      if (!contributionsData || contributionsError) {
+        refetchContributions?.();
       }
     }
-    
-    fetchRepositories();
-  }, [githubUsername]);
+  }, [user, githubUsername, userData, userError, contributionsData, contributionsError, refetchUserData, refetchContributions]);
 
   // Process GitHub data
   const processedUserData = useMemo(() => {
