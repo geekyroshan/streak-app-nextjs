@@ -125,15 +125,38 @@ export async function GET(request: NextRequest) {
       // Generate a unique timestamp to prevent caching
       const timestamp = Date.now();
       
-      // Redirect to dashboard with a flag to force reload
-      return NextResponse.redirect(new URL(`/dashboard?fresh=true&_=${timestamp}`, request.url), {
-        // Add cache-control headers to ensure no caching of this redirect
-        headers: {
-          'Cache-Control': 'no-store, max-age=0, must-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0'
+      // Return an HTML page with client-side redirect for more reliable navigation
+      return new NextResponse(
+        `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Redirecting to Dashboard...</title>
+            <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+            <meta http-equiv="Pragma" content="no-cache" />
+            <meta http-equiv="Expires" content="0" />
+            <script>
+              // Immediate redirect to dashboard
+              window.location.href = '/dashboard?fresh=true&_=${timestamp}';
+            </script>
+          </head>
+          <body>
+            <p>Authentication successful! Redirecting to dashboard...</p>
+            <noscript>
+              <p>JavaScript is required for this application. Please enable JavaScript and <a href="/dashboard?fresh=true&_=${timestamp}">click here to continue</a>.</p>
+            </noscript>
+          </body>
+        </html>
+        `,
+        {
+          headers: {
+            'Content-Type': 'text/html',
+            'Cache-Control': 'no-store, max-age=0, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          },
         }
-      });
+      );
     } else {
       // If no code provided, use an improved client-side script
       return new NextResponse(

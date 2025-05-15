@@ -278,10 +278,10 @@ export default function AnalyticsPage() {
             {isLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className="flex items-center">
-                <Activity className="w-4 h-4 mr-2 text-muted-foreground" />
+            <div className="flex items-center">
+              <Activity className="w-4 h-4 mr-2 text-muted-foreground" />
                 <div className="text-2xl font-bold">{stats.totalContributions.toLocaleString()}</div>
-              </div>
+            </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">During selected timeframe</p>
           </CardContent>
@@ -295,10 +295,10 @@ export default function AnalyticsPage() {
             {isLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className="flex items-center">
-                <Calendar className="w-4 h-4 mr-2 text-muted-foreground" />
+            <div className="flex items-center">
+              <Calendar className="w-4 h-4 mr-2 text-muted-foreground" />
                 <div className="text-2xl font-bold">{stats.activeStreak} days</div>
-              </div>
+            </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">Current streak</p>
           </CardContent>
@@ -312,10 +312,10 @@ export default function AnalyticsPage() {
             {isLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className="flex items-center">
-                <GitBranch className="w-4 h-4 mr-2 text-muted-foreground" />
+            <div className="flex items-center">
+              <GitBranch className="w-4 h-4 mr-2 text-muted-foreground" />
                 <div className="text-2xl font-bold">{stats.activeRepos}</div>
-              </div>
+            </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">With recent contributions</p>
           </CardContent>
@@ -329,10 +329,10 @@ export default function AnalyticsPage() {
             {isLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className="flex items-center">
-                <BarChart2 className="w-4 h-4 mr-2 text-muted-foreground" />
+            <div className="flex items-center">
+              <BarChart2 className="w-4 h-4 mr-2 text-muted-foreground" />
                 <div className="text-2xl font-bold">{stats.contributionRate}/day</div>
-              </div>
+            </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">Avg over selected period</p>
           </CardContent>
@@ -398,11 +398,11 @@ export default function AnalyticsPage() {
             ) : error ? (
               <div className="text-destructive p-4 text-center">Error loading contribution data</div>
             ) : (
-              <ActivityChart 
-                title="Contributions by Month" 
-                data={monthlyData} 
-                color="#66D9C2"
-              />
+            <ActivityChart 
+              title="Contributions by Month" 
+              data={monthlyData} 
+              color="#66D9C2"
+            />
             )}
           </CardContent>
         </Card>
@@ -424,11 +424,11 @@ export default function AnalyticsPage() {
             ) : repoActivityData.length === 0 ? (
               <div className="text-muted-foreground p-4 text-center">No repository activity found</div>
             ) : (
-              <ActivityChart 
-                title="Contributions by Repository" 
-                data={repoActivityData} 
-                color="#9b87f5"
-              />
+            <ActivityChart 
+              title="Contributions by Repository" 
+              data={repoActivityData} 
+              color="#9b87f5"
+            />
             )}
           </CardContent>
         </Card>
